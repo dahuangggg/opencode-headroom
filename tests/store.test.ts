@@ -270,6 +270,44 @@ describe("CCR store", () => {
     expect((await store.get(second.hash))?.originalContent).toBe(secondContent);
   });
 
+  it("does not reuse pruned collision hashes for different content", async () => {
+    let now = 1000;
+    const store = new MemoryCCRStore(() => now);
+    const firstContent = "\uD841\u0080";
+    const secondContent = "js-string-utf16le\0A\u0600\0";
+    const first = await store.put({
+      sessionID: "s1",
+      callID: "c1",
+      tool: "Bash",
+      strategy: "text",
+      originalContent: firstContent,
+      compressedContent: "first",
+      originalTokens: 10,
+      compressedTokens: 2,
+      ttlMs: 1,
+    });
+
+    now = 1002;
+
+    expect(await store.pruneExpired()).toBe(1);
+
+    const second = await store.put({
+      sessionID: "s2",
+      callID: "c2",
+      tool: "Bash",
+      strategy: "text",
+      originalContent: secondContent,
+      compressedContent: "second",
+      originalTokens: 10,
+      compressedTokens: 2,
+      ttlMs: 60_000,
+    });
+
+    expect(second.hash).not.toBe(first.hash);
+    expect(await store.get(first.hash)).toBeNull();
+    expect((await store.get(second.hash))?.originalContent).toBe(secondContent);
+  });
+
   it("rejects invalid ttl values", async () => {
     const store = new MemoryCCRStore();
 
@@ -432,6 +470,7 @@ describeBunSQLite("Bun SQLite CCR store", () => {
     const result = runBunSQLiteScenario<{
       firstHash: string;
       secondHash: string;
+      prePruneCount: number;
       oldLookup: string | null;
       secondLookup: string | null;
       pruneCount: number;
@@ -448,6 +487,7 @@ describeBunSQLite("Bun SQLite CCR store", () => {
         }),
       );
       now = 1002;
+      const prePruneCount = await store.pruneExpired();
       const second = await store.put(
         putInput({
           originalContent: secondContent,
@@ -459,6 +499,7 @@ describeBunSQLite("Bun SQLite CCR store", () => {
       return {
         firstHash: first.hash,
         secondHash: second.hash,
+        prePruneCount,
         oldLookup: (await store.get(first.hash))?.originalContent ?? null,
         secondLookup: (await store.get(second.hash))?.originalContent ?? null,
         pruneCount: await store.pruneExpired(),
@@ -466,6 +507,7 @@ describeBunSQLite("Bun SQLite CCR store", () => {
     `);
 
     expect(result.secondHash).not.toBe(result.firstHash);
+    expect(result.prePruneCount).toBe(1);
     expect(result.oldLookup).toBeNull();
     expect(result.secondLookup).toBe("js-string-utf16le\0A\u0600\0");
     expect(result.pruneCount).toBe(0);

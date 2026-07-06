@@ -42,6 +42,12 @@ CREATE TABLE IF NOT EXISTS ccr_entries (
 CREATE INDEX IF NOT EXISTS idx_ccr_hash ON ccr_entries(hash);
 CREATE INDEX IF NOT EXISTS idx_ccr_session ON ccr_entries(session_id);
 CREATE INDEX IF NOT EXISTS idx_ccr_expires_at ON ccr_entries(expires_at);
+CREATE TABLE IF NOT EXISTS ccr_hash_history (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  hash TEXT NOT NULL,
+  original_content BLOB NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_ccr_hash_history_hash ON ccr_hash_history(hash);
 `;
 
 type Row = {
@@ -60,6 +66,10 @@ type Row = {
   created_at: number;
   expires_at: number;
   retrieval_count: number;
+};
+
+type HistoryRow = {
+  original_content: Uint8Array;
 };
 
 function encodeContent(content: string): Buffer {
@@ -106,6 +116,7 @@ export class BunSQLiteCCRStore implements CCRStore {
     mkdirSync(dirname(path), { recursive: true });
     this.db = new Database(path);
     this.db.exec(SCHEMA);
+    this.backfillHashHistory();
     try {
       chmodSync(path, 0o600);
     } catch {
@@ -113,15 +124,42 @@ export class BunSQLiteCCRStore implements CCRStore {
     }
   }
 
-  private rowsForHash(hash: string): Row[] {
+  private historyRowsForHash(hash: string): HistoryRow[] {
     return this.db
-      .query<Row>("SELECT * FROM ccr_entries WHERE hash = ? ORDER BY id ASC")
+      .query<HistoryRow>(
+        "SELECT original_content FROM ccr_hash_history WHERE hash = ? ORDER BY id ASC",
+      )
       .all(hash);
+  }
+
+  private backfillHashHistory(): void {
+    this.db.exec(`
+INSERT INTO ccr_hash_history (hash, original_content)
+SELECT e.hash, e.original_content
+FROM ccr_entries e
+WHERE NOT EXISTS (
+  SELECT 1
+  FROM ccr_hash_history h
+  WHERE h.hash = e.hash AND h.original_content = e.original_content
+);
+`);
+  }
+
+  private recordHashHistory(hash: string, originalContent: string): void {
+    const encoded = encodeContent(originalContent);
+    this.db
+      .query(`INSERT INTO ccr_hash_history (hash, original_content)
+        SELECT ?, ?
+        WHERE NOT EXISTS (
+          SELECT 1 FROM ccr_hash_history
+          WHERE hash = ? AND original_content = ?
+        )`)
+      .run(hash, encoded, hash, encoded);
   }
 
   private allocateHash(originalContent: string): string {
     const baseHash = createContentHash(originalContent);
-    const baseRows = this.rowsForHash(baseHash);
+    const baseRows = this.historyRowsForHash(baseHash);
     if (
       baseRows.length === 0 ||
       baseRows.every((row) => decodeContent(row.original_content) === originalContent)
@@ -131,7 +169,7 @@ export class BunSQLiteCCRStore implements CCRStore {
 
     for (let attempt = 1; ; attempt += 1) {
       const candidate = createCollisionHash(originalContent, attempt);
-      const candidateRows = this.rowsForHash(candidate);
+      const candidateRows = this.historyRowsForHash(candidate);
       if (
         candidateRows.length === 0 ||
         candidateRows.every(
@@ -186,6 +224,7 @@ export class BunSQLiteCCRStore implements CCRStore {
         entry.expiresAt,
         entry.retrievalCount,
       );
+    this.recordHashHistory(entry.hash, entry.originalContent);
 
     return { ...entry };
   }

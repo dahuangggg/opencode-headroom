@@ -3,6 +3,7 @@ import type { CCREntry, CCRPutInput, CCRStats, CCRStore } from "./types.js";
 
 export class MemoryCCRStore implements CCRStore {
   private entries = new Map<string, CCREntry[]>();
+  private hashHistory = new Map<string, Set<string>>();
 
   constructor(private now: () => number = () => Date.now()) {}
 
@@ -12,26 +13,24 @@ export class MemoryCCRStore implements CCRStore {
 
   private allocateHash(originalContent: string): string {
     const baseHash = createContentHash(originalContent);
-    const baseEntries = this.entries.get(baseHash);
-    if (
-      !baseEntries ||
-      baseEntries.every((entry) => entry.originalContent === originalContent)
-    ) {
+    const baseHistory = this.hashHistory.get(baseHash);
+    if (!baseHistory || baseHistory.has(originalContent)) {
       return baseHash;
     }
 
     for (let attempt = 1; ; attempt += 1) {
       const candidate = createCollisionHash(originalContent, attempt);
-      const candidateEntries = this.entries.get(candidate);
-      if (
-        !candidateEntries ||
-        candidateEntries.every(
-          (entry) => entry.originalContent === originalContent,
-        )
-      ) {
+      const candidateHistory = this.hashHistory.get(candidate);
+      if (!candidateHistory || candidateHistory.has(originalContent)) {
         return candidate;
       }
     }
+  }
+
+  private recordHashHistory(hash: string, originalContent: string): void {
+    const history = this.hashHistory.get(hash) ?? new Set<string>();
+    history.add(originalContent);
+    this.hashHistory.set(hash, history);
   }
 
   async put(input: CCRPutInput): Promise<CCREntry> {
@@ -61,6 +60,7 @@ export class MemoryCCRStore implements CCRStore {
     const entries = this.entries.get(hash) ?? [];
     entries.push(entry);
     this.entries.set(hash, entries);
+    this.recordHashHistory(hash, input.originalContent);
 
     return { ...entry };
   }
