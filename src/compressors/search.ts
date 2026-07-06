@@ -8,8 +8,8 @@ export interface SearchMatch {
 }
 
 const MATCH_RE = /^(?<file>.+?)(?<sep>[:\-])(?<line>\d+)\k<sep>(?<content>.*)$/;
-const PRIORITY_RE =
-  /\b(error|fail|failed|fatal|critical|exception|warn|warning|todo|fixme|hack|auth|secret|password|security)\b/i;
+const SEVERITY_RE =
+  /\b(error|fail|failed|fatal|critical|exception|warn|warning|todo|fixme|hack|secret|password|security)\b/i;
 
 export function parseSearchResults(content: string): SearchMatch[] {
   const results: SearchMatch[] = [];
@@ -32,7 +32,7 @@ export function parseSearchResults(content: string): SearchMatch[] {
 
 function scoreMatch(match: SearchMatch, query: string): number {
   let score = 0;
-  if (PRIORITY_RE.test(match.content)) {
+  if (SEVERITY_RE.test(match.content)) {
     score += 1;
   }
   const lower = match.content.toLowerCase();
@@ -45,6 +45,19 @@ function scoreMatch(match: SearchMatch, query: string): number {
     }
   }
   return score;
+}
+
+function severityScore(match: SearchMatch): number {
+  return SEVERITY_RE.test(match.content) ? 1 : 0;
+}
+
+function queryHitCount(match: SearchMatch, query: string): number {
+  const lower = match.content.toLowerCase();
+  return query
+    .toLowerCase()
+    .split(/\W+/)
+    .filter((part) => part.length > 2)
+    .filter((word) => lower.includes(word)).length;
 }
 
 export function compressSearch(input: CompressorInput): CompressorResult {
@@ -65,34 +78,70 @@ export function compressSearch(input: CompressorInput): CompressorResult {
     byFile.set(match.file, list);
   }
 
-  const selected: SearchMatch[] = [];
+  const required = new Map<string, SearchMatch>();
+  const filler: SearchMatch[] = [];
   const summaries: string[] = [];
   for (const [file, fileMatches] of [...byFile.entries()].slice(0, 15)) {
-    const keep = new Map<number, SearchMatch>();
+    const requiredForFile = new Map<number, SearchMatch>();
+    const fillerForFile = new Map<number, SearchMatch>();
+    for (const match of fileMatches) {
+      const queryHits = queryHitCount(match, input.query);
+      if (severityScore(match) > 0 || queryHits >= 2) {
+        requiredForFile.set(match.lineNumber, match);
+        required.set(`${match.file}:${match.lineNumber}`, match);
+      }
+    }
     const first = fileMatches[0];
     const last = fileMatches.at(-1);
     if (first) {
-      keep.set(first.lineNumber, first);
+      fillerForFile.set(first.lineNumber, first);
     }
     if (last) {
-      keep.set(last.lineNumber, last);
+      fillerForFile.set(last.lineNumber, last);
     }
     const scored = [...fileMatches].sort(
       (a, b) => scoreMatch(b, input.query) - scoreMatch(a, input.query),
     );
     for (const match of scored) {
-      if (keep.size >= 5) {
+      if (requiredForFile.size + fillerForFile.size >= 5) {
         break;
       }
-      keep.set(match.lineNumber, match);
+      if (!requiredForFile.has(match.lineNumber)) {
+        fillerForFile.set(match.lineNumber, match);
+      }
     }
-    const kept = [...keep.values()].sort(
+    const kept = [
+      ...requiredForFile.values(),
+      ...fillerForFile.values(),
+    ].sort(
       (a, b) => a.lineNumber - b.lineNumber,
     );
-    selected.push(...kept);
+    filler.push(
+      ...kept.filter(
+        (match) => !required.has(`${match.file}:${match.lineNumber}`),
+      ),
+    );
     const omitted = fileMatches.length - kept.length;
     if (omitted > 0) {
       summaries.push(`[... and ${omitted} more matches in ${file}]`);
+    }
+  }
+
+  const selected = [...required.values()];
+  const selectedKeys = new Set(
+    selected.map((match) => `${match.file}:${match.lineNumber}`),
+  );
+  filler.sort(
+    (a, b) => a.file.localeCompare(b.file) || a.lineNumber - b.lineNumber,
+  );
+  for (const match of filler) {
+    if (selected.length >= 30) {
+      break;
+    }
+    const key = `${match.file}:${match.lineNumber}`;
+    if (!selectedKeys.has(key)) {
+      selected.push(match);
+      selectedKeys.add(key);
     }
   }
 
@@ -101,7 +150,6 @@ export function compressSearch(input: CompressorInput): CompressorResult {
   );
   const output = [
     ...selected
-      .slice(0, 30)
       .map((match) => `${match.file}:${match.lineNumber}:${match.content}`),
     ...summaries,
     formatRetrieveMarker(input.hash),
