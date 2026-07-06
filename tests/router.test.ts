@@ -48,6 +48,9 @@ describe("content router detection", () => {
     expect(
       detectContentType("2026-01-01T10:22:33Z ERROR failed").kind,
     ).toBe("log");
+    expect(
+      detectContentType("2026-01-01T10:22:33.123Z ERROR failed").kind,
+    ).toBe("log");
   });
 
   it("falls back to text", () => {

@@ -2,8 +2,8 @@ import type { DetectionResult } from "../compressors/types.js";
 
 const ENVELOPE_RE =
   /^\s*(?:<returncode>\s*-?\d+\s*<\/returncode>\s*)?<(?<tag>output|stdout|stderr|tool_result|result)>\n?(?<body>[\s\S]*?)\n?<\/\k<tag>>\s*$/;
-const SEARCH_COLON_RE = /^(?=.*[/.])[^\s:][^:\n]*:\d+(?=[:\-\s])/;
-const SEARCH_CONTEXT_RE = /^(?=.*[/.])[^\s:\n][^:\n]*-\d+(?=[:\-\s])/;
+const SEARCH_COLON_RE = /^(?<path>[^\s:][^:\n]*):\d+(?=[:\-\s])/;
+const SEARCH_CONTEXT_RE = /^(?<path>[^\s:\n][^:\n]*)-\d+(?=[:\-\s])/;
 const DIFF_HEADER_RE =
   /^(diff --git|diff --combined |diff --cc |--- a\/|@@\s+-\d+)/;
 const DIFF_CHANGE_RE = /^[+-][^+-]/;
@@ -25,7 +25,14 @@ export function stripDetectionEnvelope(content: string): string {
 }
 
 function isSearchLine(line: string): boolean {
-  return SEARCH_COLON_RE.test(line) || SEARCH_CONTEXT_RE.test(line);
+  const token = line.trimStart().split(/\s+/, 1)[0] ?? "";
+  const match = SEARCH_COLON_RE.exec(token) ?? SEARCH_CONTEXT_RE.exec(token);
+  const path = match?.groups?.path;
+  if (!path) {
+    return false;
+  }
+  const filename = path.split(/[\\/]/).at(-1) ?? path;
+  return path.includes("/") || path.includes("\\") || filename.includes(".");
 }
 
 export function detectContentType(content: string): DetectionResult {
