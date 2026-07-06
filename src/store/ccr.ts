@@ -8,8 +8,34 @@ export interface StoreFactoryOptions {
   path: string;
 }
 
+function hasLoneSurrogate(content: string): boolean {
+  for (let index = 0; index < content.length; index += 1) {
+    const code = content.charCodeAt(index);
+    if (code >= 0xd800 && code <= 0xdbff) {
+      const next = content.charCodeAt(index + 1);
+      if (next >= 0xdc00 && next <= 0xdfff) {
+        index += 1;
+        continue;
+      }
+      return true;
+    }
+    if (code >= 0xdc00 && code <= 0xdfff) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
 export function createContentHash(content: string): string {
-  return createHash("sha256").update(content).digest("hex").slice(0, 24);
+  const hash = createHash("sha256");
+  if (hasLoneSurrogate(content)) {
+    hash.update("js-string-utf16le\0", "utf8");
+    hash.update(Buffer.from(content, "utf16le"));
+  } else {
+    hash.update(content, "utf8");
+  }
+  return hash.digest("hex").slice(0, 24);
 }
 
 export async function createCCRStore(

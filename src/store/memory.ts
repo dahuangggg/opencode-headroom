@@ -2,7 +2,7 @@ import { createContentHash } from "./ccr.js";
 import type { CCREntry, CCRPutInput, CCRStats, CCRStore } from "./types.js";
 
 export class MemoryCCRStore implements CCRStore {
-  private entries = new Map<string, CCREntry>();
+  private entries = new Map<string, CCREntry[]>();
 
   constructor(private now: () => number = () => Date.now()) {}
 
@@ -11,6 +11,10 @@ export class MemoryCCRStore implements CCRStore {
   }
 
   async put(input: CCRPutInput): Promise<CCREntry> {
+    if (!Number.isFinite(input.ttlMs) || input.ttlMs <= 0) {
+      throw new Error("CCR ttlMs must be a positive finite number");
+    }
+
     const createdAt = this.now();
     const hash = createContentHash(input.originalContent);
     const entry: CCREntry = {
@@ -30,22 +34,34 @@ export class MemoryCCRStore implements CCRStore {
       retrievalCount: 0,
     };
 
-    this.entries.set(hash, entry);
+    const entries = this.entries.get(hash) ?? [];
+    entries.push(entry);
+    this.entries.set(hash, entries);
 
     return { ...entry };
   }
 
   async get(hash: string): Promise<CCREntry | null> {
-    const entry = this.entries.get(hash);
-    if (!entry) {
+    const entries = this.entries.get(hash);
+    if (!entries) {
       return null;
     }
 
-    if (entry.expiresAt <= this.now()) {
+    const now = this.now();
+    const activeEntries = entries.filter((entry) => entry.expiresAt > now);
+    if (activeEntries.length === 0) {
       this.entries.delete(hash);
       return null;
     }
 
+    if (activeEntries.length !== entries.length) {
+      this.entries.set(hash, activeEntries);
+    }
+
+    const entry = activeEntries[activeEntries.length - 1];
+    if (!entry) {
+      return null;
+    }
     entry.retrievalCount += 1;
 
     return { ...entry };
@@ -54,7 +70,7 @@ export class MemoryCCRStore implements CCRStore {
   async stats(sessionID?: string): Promise<CCRStats> {
     await this.pruneExpired();
 
-    const entries = [...this.entries.values()].filter(
+    const entries = [...this.entries.values()].flat().filter(
       (entry) => sessionID === undefined || entry.sessionID === sessionID,
     );
 
@@ -83,10 +99,13 @@ export class MemoryCCRStore implements CCRStore {
   async pruneExpired(now: number = this.now()): Promise<number> {
     let removed = 0;
 
-    for (const [hash, entry] of this.entries) {
-      if (entry.expiresAt <= now) {
+    for (const [hash, entries] of this.entries) {
+      const activeEntries = entries.filter((entry) => entry.expiresAt > now);
+      removed += entries.length - activeEntries.length;
+      if (activeEntries.length === 0) {
         this.entries.delete(hash);
-        removed += 1;
+      } else if (activeEntries.length !== entries.length) {
+        this.entries.set(hash, activeEntries);
       }
     }
 
