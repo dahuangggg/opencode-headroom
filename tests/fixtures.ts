@@ -27,3 +27,21 @@ export function searchFixture(): string {
   );
   return [...auth, ...db].join("\n");
 }
+
+export function logFixture(): string {
+  const info = Array.from(
+    { length: 100 },
+    (_, index) => `INFO processing item ${index + 1}`,
+  );
+  return [
+    "============================= test session starts =============================",
+    ...info.slice(0, 40),
+    "WARNING auth retry scheduled",
+    "ERROR critical auth failure",
+    "Traceback (most recent call last):",
+    '  File "app.py", line 10, in main',
+    "ValueError: token rejected",
+    ...info.slice(40),
+    "2 failed, 1 warning",
+  ].join("\n");
+}
