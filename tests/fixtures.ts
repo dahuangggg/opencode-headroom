@@ -45,3 +45,17 @@ export function logFixture(): string {
     "2 failed, 1 warning",
   ].join("\n");
 }
+
+export function textFixture(): string {
+  return [
+    "# Build Report",
+    "The build processed many modules successfully.",
+    ...Array.from(
+      { length: 60 },
+      (_, index) => `Module ${index + 1} completed with routine output.`,
+    ),
+    "Security warning: auth token rotation is required.",
+    "Action required: fix retry backoff before release.",
+    "The final deployment summary is ready.",
+  ].join("\n\n");
+}
