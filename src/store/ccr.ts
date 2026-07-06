@@ -38,6 +38,15 @@ export function createContentHash(content: string): string {
   return hash.digest("hex").slice(0, 24);
 }
 
+export function createCollisionHash(content: string, attempt: number): string {
+  const hash = createHash("sha256");
+  hash.update("opencode-headroom-collision\0", "utf8");
+  hash.update(String(attempt), "utf8");
+  hash.update("\0", "utf8");
+  hash.update(Buffer.from(content, "utf16le"));
+  return hash.digest("hex").slice(0, 24);
+}
+
 export async function createCCRStore(
   options: StoreFactoryOptions,
 ): Promise<CCRStore> {

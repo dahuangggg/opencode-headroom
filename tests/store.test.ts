@@ -161,6 +161,43 @@ describe("CCR store", () => {
     expect((await store.stats("s2")).entryCount).toBe(0);
   });
 
+  it("resolves hash collisions without losing exact content", async () => {
+    const store = new MemoryCCRStore();
+    const firstContent = "\uD841\u0080";
+    const secondContent = "js-string-utf16le\0A\u0600\0";
+
+    expect(createContentHash(firstContent)).toBe(
+      createContentHash(secondContent),
+    );
+
+    const first = await store.put({
+      sessionID: "s1",
+      callID: "c1",
+      tool: "Bash",
+      strategy: "text",
+      originalContent: firstContent,
+      compressedContent: "first",
+      originalTokens: 10,
+      compressedTokens: 2,
+      ttlMs: 60_000,
+    });
+    const second = await store.put({
+      sessionID: "s2",
+      callID: "c2",
+      tool: "Bash",
+      strategy: "text",
+      originalContent: secondContent,
+      compressedContent: "second",
+      originalTokens: 10,
+      compressedTokens: 2,
+      ttlMs: 60_000,
+    });
+
+    expect(second.hash).not.toBe(first.hash);
+    expect((await store.get(first.hash))?.originalContent).toBe(firstContent);
+    expect((await store.get(second.hash))?.originalContent).toBe(secondContent);
+  });
+
   it("rejects invalid ttl values", async () => {
     const store = new MemoryCCRStore();
 

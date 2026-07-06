@@ -1,4 +1,4 @@
-import { createContentHash } from "./ccr.js";
+import { createCollisionHash, createContentHash } from "./ccr.js";
 import type { CCREntry, CCRPutInput, CCRStats, CCRStore } from "./types.js";
 
 export class MemoryCCRStore implements CCRStore {
@@ -10,13 +10,37 @@ export class MemoryCCRStore implements CCRStore {
     this.now = now;
   }
 
+  private allocateHash(originalContent: string): string {
+    const baseHash = createContentHash(originalContent);
+    const baseEntries = this.entries.get(baseHash);
+    if (
+      !baseEntries ||
+      baseEntries.every((entry) => entry.originalContent === originalContent)
+    ) {
+      return baseHash;
+    }
+
+    for (let attempt = 1; ; attempt += 1) {
+      const candidate = createCollisionHash(originalContent, attempt);
+      const candidateEntries = this.entries.get(candidate);
+      if (
+        !candidateEntries ||
+        candidateEntries.every(
+          (entry) => entry.originalContent === originalContent,
+        )
+      ) {
+        return candidate;
+      }
+    }
+  }
+
   async put(input: CCRPutInput): Promise<CCREntry> {
     if (!Number.isFinite(input.ttlMs) || input.ttlMs <= 0) {
       throw new Error("CCR ttlMs must be a positive finite number");
     }
 
     const createdAt = this.now();
-    const hash = createContentHash(input.originalContent);
+    const hash = this.allocateHash(input.originalContent);
     const entry: CCREntry = {
       hash,
       sessionID: input.sessionID,
