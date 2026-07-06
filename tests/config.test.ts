@@ -19,6 +19,16 @@ describe("normalizeConfig", () => {
     expect(config.debug).toBe(false);
   });
 
+  it("accepts planned storage backends", () => {
+    expect(normalizeConfig({ storage: { kind: "memory" } }).storage.kind).toBe(
+      "memory",
+    );
+    expect(
+      normalizeConfig({ storage: { kind: "bun-sqlite", path: "/tmp/x.db" } })
+        .storage,
+    ).toEqual({ kind: "bun-sqlite", path: "/tmp/x.db" });
+  });
+
   it("rejects unsupported engines", () => {
     expect(() => normalizeConfig({ engine: "headroom-http" as never })).toThrow(
       /Unsupported engine/,

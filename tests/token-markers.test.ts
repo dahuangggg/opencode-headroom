@@ -43,6 +43,24 @@ describe("CCR markers", () => {
     expect(
       containsCCRMarker(JSON.stringify(formatJsonSentinel(hash, 12))),
     ).toBe(true);
+    expect(containsCCRMarker("<<ccr:0123456789ab,base64,4.5KB>>")).toBe(
+      true,
+    );
+    expect(
+      containsCCRMarker(
+        "[100 lines compressed to 10. Retrieve more: hash=0123456789abcdef01234567]",
+      ),
+    ).toBe(true);
+    expect(
+      containsCCRMarker(
+        "[100 lines compressed. hash=0123456789abcdef01234567]",
+      ),
+    ).toBe(true);
+    expect(
+      containsCCRMarker(
+        "[Retrieve original: hash=0123456789abcdef01234567]",
+      ),
+    ).toBe(true);
     expect(containsCCRMarker(`x ${formatRetrieveMarker(hash)}`)).toBe(true);
     expect(containsCCRMarker("plain")).toBe(false);
   });

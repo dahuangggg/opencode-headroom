@@ -1,6 +1,6 @@
 export type HeadroomEngine = "native";
 
-export type StorageKind = "auto";
+export type StorageKind = "auto" | "memory" | "bun-sqlite";
 
 export interface HeadroomStorageConfig {
   kind: StorageKind;
