@@ -1,11 +1,11 @@
-import { tool } from "@opencode-ai/plugin";
+import { tool, type ToolDefinition } from "@opencode-ai/plugin";
 
 import type { CompressionEngine } from "../engine/types.js";
 import { isValidCCRHash } from "../markers.js";
 
 const z = tool.schema;
 
-export function createRetrieveTool(engine: CompressionEngine) {
+export function createRetrieveTool(engine: CompressionEngine): ToolDefinition {
   return tool({
     description:
       "Retrieve exact original content from opencode-headroom CCR by 24-character hash. Use when compressed tool output contains a CCR or Retrieve marker.",

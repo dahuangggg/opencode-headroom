@@ -1,10 +1,10 @@
-import { tool } from "@opencode-ai/plugin";
+import { tool, type ToolDefinition } from "@opencode-ai/plugin";
 
 import type { CompressionEngine } from "../engine/types.js";
 
 const z = tool.schema;
 
-export function createStatsTool(engine: CompressionEngine) {
+export function createStatsTool(engine: CompressionEngine): ToolDefinition {
   return tool({
     description:
       "Show opencode-headroom compression and CCR statistics for this session or all active entries.",
