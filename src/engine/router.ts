@@ -1,4 +1,12 @@
-import type { DetectionResult } from "../compressors/types.js";
+import { compressJson } from "../compressors/json.js";
+import { compressLog } from "../compressors/log.js";
+import { compressSearch } from "../compressors/search.js";
+import { compressText } from "../compressors/text.js";
+import type {
+  CompressorInput,
+  CompressorResult,
+  DetectionResult,
+} from "../compressors/types.js";
 
 const ENVELOPE_RE =
   /^\s*(?:<returncode>\s*-?\d+\s*<\/returncode>\s*)?<(?<tag>output|stdout|stderr|tool_result|result)>\n?(?<body>[\s\S]*?)\n?<\/\k<tag>>\s*$/;
@@ -92,4 +100,26 @@ export function detectContentType(content: string): DetectionResult {
   }
 
   return { kind: "text", confidence: 0.5, metadata: {} };
+}
+
+export function compressByContentType(input: CompressorInput): CompressorResult {
+  const detection = detectContentType(input.content);
+  if (detection.kind === "diff") {
+    return {
+      changed: false,
+      output: input.content,
+      strategy: "diff",
+      reason: "diff_passthrough",
+    };
+  }
+  if (detection.kind === "json") {
+    return compressJson(input);
+  }
+  if (detection.kind === "search") {
+    return compressSearch(input);
+  }
+  if (detection.kind === "log") {
+    return compressLog(input);
+  }
+  return compressText(input);
 }
