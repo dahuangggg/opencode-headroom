@@ -12,6 +12,15 @@ function createTempDBPath(): { dir: string; path: string } {
   return { dir, path: join(dir, "ccr.sqlite") };
 }
 
+const hasBun = (() => {
+  try {
+    execFileSync("bun", ["--version"], { stdio: "ignore" });
+    return true;
+  } catch {
+    return false;
+  }
+})();
+
 function runBunSQLiteScenario<T>(body: string): T {
   const { dir, path } = createTempDBPath();
   try {
@@ -54,7 +63,10 @@ console.log(JSON.stringify(result));
       {
         cwd: process.cwd(),
         encoding: "utf8",
-        env: { ...process.env, CCR_DB_PATH: path },
+        env: {
+          ...process.env,
+          CCR_DB_PATH: path,
+        },
       },
     );
     return JSON.parse(output) as T;
@@ -283,7 +295,9 @@ describe("CCR store", () => {
   });
 });
 
-describe("Bun SQLite CCR store", () => {
+const describeBunSQLite = hasBun ? describe : describe.skip;
+
+describeBunSQLite("Bun SQLite CCR store", () => {
   it("round-trips exact original content using a temp database", () => {
     const result = runBunSQLiteScenario<{
       dbExists: boolean;
@@ -307,6 +321,7 @@ describe("Bun SQLite CCR store", () => {
         originalContent: got?.originalContent ?? null,
         compressedContent: got?.compressedContent ?? null,
         retrievalCount: got?.retrievalCount ?? null,
+        totalRetrievals: (await store.stats("s1")).totalRetrievals,
         entryCount: (await store.stats("s1")).entryCount,
       };
     `);
@@ -315,6 +330,7 @@ describe("Bun SQLite CCR store", () => {
     expect(result.originalContent).toBe("line 1\nline 2\0with nul");
     expect(result.compressedContent).toBe("compressed sqlite");
     expect(result.retrievalCount).toBe(1);
+    expect(result.totalRetrievals).toBe(1);
     expect(result.entryCount).toBe(1);
   });
 
@@ -410,6 +426,49 @@ describe("Bun SQLite CCR store", () => {
     expect(result.sameHash).toBe(false);
     expect(result.firstContent).toBe("\uD841\u0080");
     expect(result.secondContent).toBe("js-string-utf16le\0A\u0600\0");
+  });
+
+  it("does not reuse expired collision hashes for different content", () => {
+    const result = runBunSQLiteScenario<{
+      firstHash: string;
+      secondHash: string;
+      oldLookup: string | null;
+      secondLookup: string | null;
+      pruneCount: number;
+    }>(`
+      let now = 1000;
+      const store = new BunSQLiteCCRStore(dbPath, Database, () => now);
+      const firstContent = "\\uD841\\u0080";
+      const secondContent = "js-string-utf16le\\0A\\u0600\\0";
+      const first = await store.put(
+        putInput({
+          originalContent: firstContent,
+          compressedContent: "first",
+          ttlMs: 1,
+        }),
+      );
+      now = 1002;
+      const second = await store.put(
+        putInput({
+          originalContent: secondContent,
+          compressedContent: "second",
+          ttlMs: 60_000,
+        }),
+      );
+
+      return {
+        firstHash: first.hash,
+        secondHash: second.hash,
+        oldLookup: (await store.get(first.hash))?.originalContent ?? null,
+        secondLookup: (await store.get(second.hash))?.originalContent ?? null,
+        pruneCount: await store.pruneExpired(),
+      };
+    `);
+
+    expect(result.secondHash).not.toBe(result.firstHash);
+    expect(result.oldLookup).toBeNull();
+    expect(result.secondLookup).toBe("js-string-utf16le\0A\u0600\0");
+    expect(result.pruneCount).toBe(0);
   });
 
   it("rejects invalid ttl values", () => {

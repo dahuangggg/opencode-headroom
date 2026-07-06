@@ -147,7 +147,6 @@ export class BunSQLiteCCRStore implements CCRStore {
     validateTtl(input.ttlMs);
 
     const createdAt = this.now();
-    await this.pruneExpired(createdAt);
     const entry: CCREntry = {
       hash: this.allocateHash(input.originalContent),
       sessionID: input.sessionID,
