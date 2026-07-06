@@ -57,16 +57,17 @@ export function compressJson(input: CompressorInput): CompressorResult {
   }
 
   const dominant = dominantSignature(parsed);
-  const selected = new Set<number>([0, parsed.length - 1]);
+  const required = new Set<number>([0, parsed.length - 1]);
   parsed.forEach((row, index) => {
     if (keySignature(row) !== dominant) {
-      selected.add(index);
+      required.add(index);
     }
     if (rowHasPriority(row, input.query)) {
-      selected.add(index);
+      required.add(index);
     }
   });
 
+  const selected = new Set<number>(required);
   for (
     let index = 0;
     index < parsed.length && selected.size < MAX_ITEMS_AFTER_CRUSH;
@@ -75,9 +76,7 @@ export function compressJson(input: CompressorInput): CompressorResult {
     selected.add(index);
   }
 
-  const keptIndexes = [...selected]
-    .sort((a, b) => a - b)
-    .slice(0, MAX_ITEMS_AFTER_CRUSH);
+  const keptIndexes = [...selected].sort((a, b) => a - b);
   const keptRows = keptIndexes.map((index) => parsed[index]);
   const dropped = parsed.length - keptRows.length;
   if (dropped <= 0) {

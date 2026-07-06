@@ -39,4 +39,34 @@ describe("JSON SmartCrusher-lite", () => {
     expect(result.changed).toBe(false);
     expect(result.output).toBe("[not json");
   });
+
+  it("never drops priority rows when required rows exceed the target", () => {
+    const rows = Array.from({ length: 40 }, (_, index) => ({
+      id: index + 1,
+      level: "INFO",
+      message: `normal event ${index + 1}`,
+      service: "api",
+    }));
+    for (let index = 1; index <= 13; index += 1) {
+      rows[index] = { ...rows[index], extra: `shape change ${index}` };
+    }
+    rows[34] = {
+      ...rows[34],
+      level: "ERROR",
+      message: "auth failed for token refresh",
+    };
+    const original = JSON.stringify(rows, null, 2);
+    const result = compressJson({
+      content: original,
+      hash: createContentHash(original),
+      query: "auth error",
+    });
+
+    const parsed = JSON.parse(result.output) as Array<Record<string, unknown>>;
+
+    expect(parsed.some((row) => row.id === 35)).toBe(true);
+    expect(
+      parsed.some((row) => row.message === "auth failed for token refresh"),
+    ).toBe(true);
+  });
 });
