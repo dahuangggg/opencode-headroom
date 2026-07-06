@@ -17,6 +17,9 @@ describe("normalizeConfig", () => {
     expect(config.skipTools).toEqual(["headroom_*", "ctx_*"]);
     expect(config.maxOutputChars).toBe(250000);
     expect(config.debug).toBe(false);
+    expect(config.debugLevel).toBe("summary");
+    expect(config.debugSink).toBe("metadata");
+    expect(config.debugPath).toBe(".headroom/debug.ndjson");
   });
 
   it("accepts planned storage backends", () => {
@@ -27,6 +30,22 @@ describe("normalizeConfig", () => {
       normalizeConfig({ storage: { kind: "bun-sqlite", path: "/tmp/x.db" } })
         .storage,
     ).toEqual({ kind: "bun-sqlite", path: "/tmp/x.db" });
+  });
+
+  it("accepts debug trace options", () => {
+    expect(
+      normalizeConfig({
+        debug: true,
+        debugLevel: "trace",
+        debugSink: "both",
+        debugPath: "/tmp/headroom-debug.ndjson",
+      }),
+    ).toMatchObject({
+      debug: true,
+      debugLevel: "trace",
+      debugSink: "both",
+      debugPath: "/tmp/headroom-debug.ndjson",
+    });
   });
 
   it("rejects unsupported engines", () => {

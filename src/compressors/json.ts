@@ -79,12 +79,26 @@ export function compressJson(input: CompressorInput): CompressorResult {
   const keptIndexes = [...selected].sort((a, b) => a - b);
   const keptRows = keptIndexes.map((index) => parsed[index]);
   const dropped = parsed.length - keptRows.length;
+  const selections = keptIndexes.slice(0, 50).map((index) => ({
+    index,
+    reason: required.has(index) ? "required" : "filler",
+  }));
   if (dropped <= 0) {
     return {
       changed: false,
       output: input.content,
       strategy: "json",
       reason: "nothing_dropped",
+      debug: {
+        compressor: {
+          strategy: "json",
+          originalChars: input.content.length,
+          compressedChars: input.content.length,
+          kept: { rows: keptRows.length, requiredRows: required.size },
+          dropped: { rows: 0 },
+          selections,
+        },
+      },
     };
   }
 
@@ -99,8 +113,32 @@ export function compressJson(input: CompressorInput): CompressorResult {
       output: input.content,
       strategy: "json",
       reason: "no_savings",
+      debug: {
+        compressor: {
+          strategy: "json",
+          originalChars: input.content.length,
+          compressedChars: output.length,
+          kept: { rows: keptRows.length, requiredRows: required.size },
+          dropped: { rows: dropped },
+          selections,
+        },
+      },
     };
   }
 
-  return { changed: true, output, strategy: "json" };
+  return {
+    changed: true,
+    output,
+    strategy: "json",
+    debug: {
+      compressor: {
+        strategy: "json",
+        originalChars: input.content.length,
+        compressedChars: output.length,
+        kept: { rows: keptRows.length, requiredRows: required.size },
+        dropped: { rows: dropped },
+        selections,
+      },
+    },
+  };
 }

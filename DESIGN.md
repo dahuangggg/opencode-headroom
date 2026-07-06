@@ -13,3 +13,7 @@ P0 is fully native:
 The detailed approved design is in:
 
 `docs/superpowers/specs/2026-07-06-opencode-headroom-native-design.md`
+
+The debug trace design is in:
+
+`docs/superpowers/specs/2026-07-06-opencode-headroom-debug-trace-design.md`

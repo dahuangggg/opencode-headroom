@@ -220,6 +220,11 @@ export function compressText(input: CompressorInput): CompressorResult {
     .sort((a, b) => a - b)
     .map((index) => segments[index])
     .filter((segment): segment is string => segment !== undefined);
+  const keptIndexes = [...selected].sort((a, b) => a - b);
+  const selections = keptIndexes.slice(0, 50).map((index) => ({
+    index,
+    reason: forceKeep.has(index) ? "required" : "scored",
+  }));
   const output = [...kept, formatRetrieveMarker(input.hash)].join("\n");
   if (output.length >= input.content.length) {
     return {
@@ -227,7 +232,45 @@ export function compressText(input: CompressorInput): CompressorResult {
       output: input.content,
       strategy: "text",
       reason: "no_savings",
+      debug: {
+        compressor: {
+          strategy: "text",
+          originalChars: input.content.length,
+          compressedChars: output.length,
+          kept: {
+            segments: kept.length,
+            requiredSegments: [...keptIndexes].filter((index) =>
+              forceKeep.has(index),
+            ).length,
+          },
+          dropped: {
+            segments: Math.max(0, segments.length - kept.length),
+          },
+          selections,
+        },
+      },
     };
   }
-  return { changed: true, output, strategy: "text" };
+  return {
+    changed: true,
+    output,
+    strategy: "text",
+    debug: {
+      compressor: {
+        strategy: "text",
+        originalChars: input.content.length,
+        compressedChars: output.length,
+        kept: {
+          segments: kept.length,
+          requiredSegments: [...keptIndexes].filter((index) =>
+            forceKeep.has(index),
+          ).length,
+        },
+        dropped: {
+          segments: Math.max(0, segments.length - kept.length),
+        },
+        selections,
+      },
+    },
+  };
 }

@@ -148,6 +148,14 @@ export function compressSearch(input: CompressorInput): CompressorResult {
   selected.sort(
     (a, b) => a.file.localeCompare(b.file) || a.lineNumber - b.lineNumber,
   );
+  const selections = selected.slice(0, 50).map((match) => {
+    const key = `${match.file}:${match.lineNumber}`;
+    return {
+      file: match.file,
+      line: match.lineNumber,
+      reason: required.has(key) ? "required" : "filler",
+    };
+  });
   const output = [
     ...selected
       .map((match) => `${match.file}:${match.lineNumber}:${match.content}`),
@@ -161,7 +169,47 @@ export function compressSearch(input: CompressorInput): CompressorResult {
       output: input.content,
       strategy: "search",
       reason: "no_savings",
+      debug: {
+        compressor: {
+          strategy: "search",
+          originalChars: input.content.length,
+          compressedChars: output.length,
+          kept: {
+            matches: selected.length,
+            requiredMatches: required.size,
+            fillerMatches: Math.max(0, selected.length - required.size),
+            files: new Set(selected.map((match) => match.file)).size,
+          },
+          dropped: {
+            matches: Math.max(0, matches.length - selected.length),
+            summaries: summaries.length,
+          },
+          selections,
+        },
+      },
     };
   }
-  return { changed: true, output, strategy: "search" };
+  return {
+    changed: true,
+    output,
+    strategy: "search",
+    debug: {
+      compressor: {
+        strategy: "search",
+        originalChars: input.content.length,
+        compressedChars: output.length,
+        kept: {
+          matches: selected.length,
+          requiredMatches: required.size,
+          fillerMatches: Math.max(0, selected.length - required.size),
+          files: new Set(selected.map((match) => match.file)).size,
+        },
+        dropped: {
+          matches: Math.max(0, matches.length - selected.length),
+          summaries: summaries.length,
+        },
+        selections,
+      },
+    },
+  };
 }

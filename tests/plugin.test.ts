@@ -1,3 +1,7 @@
+import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+
 import { describe, expect, it } from "vitest";
 
 import { NativeHeadroomCompatibleEngine } from "../src/engine/native.js";
@@ -88,5 +92,121 @@ describe("OpenCode plugin", () => {
     );
 
     expect(output.output).toBe(original);
+  });
+
+  it("attaches compact debug metadata when enabled", async () => {
+    const plugin = await HeadroomNativePlugin(pluginInput(), {
+      storage: { kind: "memory" },
+      thresholdChars: 10,
+      thresholdTokens: 1,
+      debug: true,
+      debugLevel: "trace",
+      debugSink: "metadata",
+    });
+    const output = { title: "Bash", output: searchFixture(), metadata: {} };
+    await plugin["tool.execute.after"]!(
+      {
+        tool: "Bash",
+        sessionID: "s1",
+        callID: "c1",
+        args: { command: "rg auth" },
+      },
+      output,
+    );
+
+    expect(output.metadata.headroom.debug).toMatchObject({
+      decision: "compressed",
+      router: { kind: "search" },
+      compressor: {
+        strategy: "search",
+      },
+      ccr: {
+        stored: true,
+        hash: output.metadata.headroom.hash,
+      },
+    });
+    expect(output.metadata.headroom.debug.compressor.dropped.matches).toBeGreaterThan(0);
+  });
+
+  it("writes one NDJSON trace record when file debug is enabled", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "opencode-headroom-debug-"));
+    const debugPath = join(dir, "debug.ndjson");
+    try {
+      const plugin = await HeadroomNativePlugin(pluginInput(), {
+        storage: { kind: "memory" },
+        thresholdChars: 10,
+        thresholdTokens: 1,
+        debug: true,
+        debugLevel: "trace",
+        debugSink: "file",
+        debugPath,
+      });
+      const output = { title: "Bash", output: searchFixture(), metadata: {} };
+      await plugin["tool.execute.after"]!(
+        {
+          tool: "Bash",
+          sessionID: "s1",
+          callID: "c1",
+          args: { command: "rg auth" },
+        },
+        output,
+      );
+
+      expect(existsSync(debugPath)).toBe(true);
+      const lines = readFileSync(debugPath, "utf8").trim().split("\n");
+      expect(lines).toHaveLength(1);
+      const record = JSON.parse(lines[0]!);
+      expect(record).toMatchObject({
+        sessionID: "s1",
+        callID: "c1",
+        tool: "Bash",
+        decision: "compressed",
+        router: { kind: "search" },
+        ccr: { stored: true },
+      });
+      expect(record.compressor.kept.matches).toBeGreaterThan(0);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("does not change compressed output when debug is enabled", async () => {
+    const basePlugin = await HeadroomNativePlugin(pluginInput(), {
+      storage: { kind: "memory" },
+      thresholdChars: 10,
+      thresholdTokens: 1,
+    });
+    const debugPlugin = await HeadroomNativePlugin(pluginInput(), {
+      storage: { kind: "memory" },
+      thresholdChars: 10,
+      thresholdTokens: 1,
+      debug: true,
+      debugLevel: "trace",
+      debugSink: "metadata",
+    });
+    const baseOutput = { title: "Bash", output: searchFixture(), metadata: {} };
+    const debugOutput = { title: "Bash", output: searchFixture(), metadata: {} };
+
+    await basePlugin["tool.execute.after"]!(
+      {
+        tool: "Bash",
+        sessionID: "s1",
+        callID: "c1",
+        args: { command: "rg auth" },
+      },
+      baseOutput,
+    );
+    await debugPlugin["tool.execute.after"]!(
+      {
+        tool: "Bash",
+        sessionID: "s1",
+        callID: "c1",
+        args: { command: "rg auth" },
+      },
+      debugOutput,
+    );
+
+    expect(debugOutput.output).toBe(baseOutput.output);
+    expect(debugOutput.metadata.headroom.hash).toBe(baseOutput.metadata.headroom.hash);
   });
 });

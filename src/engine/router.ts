@@ -104,22 +104,43 @@ export function detectContentType(content: string): DetectionResult {
 
 export function compressByContentType(input: CompressorInput): CompressorResult {
   const detection = detectContentType(input.content);
+  const attachRouterDebug = (result: CompressorResult): CompressorResult => ({
+    ...result,
+    debug: {
+      ...(result.debug ?? {}),
+      router: {
+        kind: detection.kind,
+        confidence: detection.confidence,
+        metadata: detection.metadata,
+      },
+    },
+  });
+
   if (detection.kind === "diff") {
-    return {
+    return attachRouterDebug({
       changed: false,
       output: input.content,
       strategy: "diff",
       reason: "diff_passthrough",
-    };
+      debug: {
+        compressor: {
+          strategy: "diff",
+          originalChars: input.content.length,
+          compressedChars: input.content.length,
+          kept: {},
+          dropped: {},
+        },
+      },
+    });
   }
   if (detection.kind === "json") {
-    return compressJson(input);
+    return attachRouterDebug(compressJson(input));
   }
   if (detection.kind === "search") {
-    return compressSearch(input);
+    return attachRouterDebug(compressSearch(input));
   }
   if (detection.kind === "log") {
-    return compressLog(input);
+    return attachRouterDebug(compressLog(input));
   }
-  return compressText(input);
+  return attachRouterDebug(compressText(input));
 }

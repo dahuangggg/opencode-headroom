@@ -12,9 +12,32 @@ export interface CompressorInput {
   query: string;
 }
 
+export interface CompressorDebugSummary {
+  strategy: ContentKind;
+  originalChars: number;
+  compressedChars: number;
+  kept: Record<string, unknown>;
+  dropped: Record<string, unknown>;
+  selections?: Array<Record<string, unknown>>;
+}
+
+export interface CompressionDebugInfo {
+  router?: {
+    kind: ContentKind;
+    confidence: number;
+    metadata: Record<string, unknown>;
+  };
+  compressor?: CompressorDebugSummary;
+  ccr?: {
+    hash?: string;
+    stored: boolean;
+  };
+}
+
 export interface CompressorResult {
   changed: boolean;
   output: string;
   strategy: ContentKind;
   reason?: string;
+  debug?: CompressionDebugInfo;
 }

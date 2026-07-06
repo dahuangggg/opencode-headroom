@@ -400,6 +400,19 @@ export function compressLog(input: CompressorInput): CompressorResult {
 
   const kept = [...selected.values()].sort((a, b) => a.index - b.index);
   const omitted = classified.length - kept.length;
+  const selections = kept.slice(0, 50).map((line) => ({
+    index: line.index,
+    level: line.level,
+    reason: required.has(line.index)
+      ? line.stackTrace
+        ? "stack_trace"
+        : line.summary
+          ? "summary"
+          : line.level === "ERROR" || line.level === "FAIL"
+            ? "error_or_fail"
+            : "required"
+      : "filler",
+  }));
   const outputLines = kept.map((line) => line.content);
   const summary = omittedSummary(omitted, buildStats(classified));
   if (summary) {
@@ -414,7 +427,43 @@ export function compressLog(input: CompressorInput): CompressorResult {
       output: input.content,
       strategy: "log",
       reason: "no_savings",
+      debug: {
+        compressor: {
+          strategy: "log",
+          originalChars: input.content.length,
+          compressedChars: output.length,
+          kept: {
+            lines: kept.length,
+            requiredLines: required.size,
+            fillerLines: Math.max(0, kept.length - required.size),
+          },
+          dropped: {
+            lines: omitted,
+          },
+          selections,
+        },
+      },
     };
   }
-  return { changed: true, output, strategy: "log" };
+  return {
+    changed: true,
+    output,
+    strategy: "log",
+    debug: {
+      compressor: {
+        strategy: "log",
+        originalChars: input.content.length,
+        compressedChars: output.length,
+        kept: {
+          lines: kept.length,
+          requiredLines: required.size,
+          fillerLines: Math.max(0, kept.length - required.size),
+        },
+        dropped: {
+          lines: omitted,
+        },
+        selections,
+      },
+    },
+  };
 }

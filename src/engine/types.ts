@@ -1,3 +1,5 @@
+import type { CompressionDebugInfo } from "../compressors/types.js";
+
 export interface ToolOutputCompressionInput {
   tool: string;
   sessionID: string;
@@ -15,6 +17,7 @@ export interface ToolOutputCompressionResult {
   originalTokens: number;
   compressedTokens: number;
   reason?: string;
+  debug?: CompressionDebugInfo;
 }
 
 export interface RetrieveResult {

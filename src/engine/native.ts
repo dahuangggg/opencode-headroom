@@ -38,6 +38,9 @@ export class NativeHeadroomCompatibleEngine implements CompressionEngine {
         originalTokens,
         compressedTokens: originalTokens,
         reason: "empty_or_marked",
+        debug: {
+          ccr: { stored: false },
+        },
       };
     }
 
@@ -56,6 +59,10 @@ export class NativeHeadroomCompatibleEngine implements CompressionEngine {
         originalTokens,
         compressedTokens: originalTokens,
         reason: compressed.reason ?? "no_savings",
+        debug: {
+          ...(compressed.debug ?? {}),
+          ccr: { stored: false },
+        },
       };
     }
 
@@ -78,6 +85,10 @@ export class NativeHeadroomCompatibleEngine implements CompressionEngine {
       hash: entry.hash,
       originalTokens,
       compressedTokens,
+      debug: {
+        ...(compressed.debug ?? {}),
+        ccr: { hash: entry.hash, stored: true },
+      },
     };
   }
 

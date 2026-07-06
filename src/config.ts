@@ -1,6 +1,8 @@
 export type HeadroomEngine = "native";
 
 export type StorageKind = "auto" | "memory" | "bun-sqlite";
+export type DebugLevel = "summary" | "trace";
+export type DebugSink = "metadata" | "file" | "both";
 
 export interface HeadroomStorageConfig {
   kind: StorageKind;
@@ -16,6 +18,9 @@ export interface HeadroomPluginOptions {
   skipTools?: string[];
   maxOutputChars?: number;
   debug?: boolean;
+  debugLevel?: DebugLevel;
+  debugSink?: DebugSink;
+  debugPath?: string;
 }
 
 export interface NormalizedHeadroomConfig {
@@ -27,6 +32,9 @@ export interface NormalizedHeadroomConfig {
   skipTools: string[];
   maxOutputChars: number;
   debug: boolean;
+  debugLevel: DebugLevel;
+  debugSink: DebugSink;
+  debugPath: string;
 }
 
 export const DEFAULT_HEADROOM_CONFIG: NormalizedHeadroomConfig = {
@@ -41,6 +49,9 @@ export const DEFAULT_HEADROOM_CONFIG: NormalizedHeadroomConfig = {
   skipTools: ["headroom_*", "ctx_*"],
   maxOutputChars: 250000,
   debug: false,
+  debugLevel: "summary",
+  debugSink: "metadata",
+  debugPath: ".headroom/debug.ndjson",
 };
 
 export function normalizeConfig(
@@ -65,6 +76,9 @@ export function normalizeConfig(
       : [...DEFAULT_HEADROOM_CONFIG.skipTools],
     maxOutputChars: options.maxOutputChars ?? DEFAULT_HEADROOM_CONFIG.maxOutputChars,
     debug: options.debug ?? DEFAULT_HEADROOM_CONFIG.debug,
+    debugLevel: options.debugLevel ?? DEFAULT_HEADROOM_CONFIG.debugLevel,
+    debugSink: options.debugSink ?? DEFAULT_HEADROOM_CONFIG.debugSink,
+    debugPath: options.debugPath ?? DEFAULT_HEADROOM_CONFIG.debugPath,
   };
 }
 

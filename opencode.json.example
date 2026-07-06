@@ -12,7 +12,11 @@
           "kind": "auto",
           "path": ".headroom/ccr.sqlite"
         },
-        "skipTools": ["headroom_*", "ctx_*"]
+        "skipTools": ["headroom_*", "ctx_*"],
+        "debug": false,
+        "debugLevel": "summary",
+        "debugSink": "metadata",
+        "debugPath": ".headroom/debug.ndjson"
       }
     ]
   ]
