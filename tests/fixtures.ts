@@ -12,3 +12,18 @@ export function largeJsonArrayFixture(): string {
   rows[25] = { ...rows[25], extra: "shape change" };
   return JSON.stringify(rows, null, 2);
 }
+
+export function searchFixture(): string {
+  const auth = Array.from(
+    { length: 70 },
+    (_, index) =>
+      `src/auth.ts:${index + 1}:${
+        index === 34 ? "ERROR auth token rejected" : `auth event ${index + 1}`
+      }`,
+  );
+  const db = Array.from(
+    { length: 40 },
+    (_, index) => `src/db.ts:${index + 1}:db query ${index + 1}`,
+  );
+  return [...auth, ...db].join("\n");
+}
