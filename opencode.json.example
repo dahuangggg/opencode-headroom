@@ -1,0 +1,19 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  "plugin": [
+    [
+      "opencode-headroom",
+      {
+        "engine": "native",
+        "thresholdTokens": 2000,
+        "thresholdChars": 8000,
+        "ttlHours": 24,
+        "storage": {
+          "kind": "auto",
+          "path": ".headroom/ccr.sqlite"
+        },
+        "skipTools": ["headroom_*", "ctx_*"]
+      }
+    ]
+  ]
+}
