@@ -41,6 +41,15 @@ describe("content router detection", () => {
     expect(result.kind).toBe("log");
   });
 
+  it("does not treat ISO timestamps as search results", () => {
+    expect(
+      detectContentType("2026-01-01 10:22:33 ERROR failed").kind,
+    ).toBe("log");
+    expect(
+      detectContentType("2026-01-01T10:22:33Z ERROR failed").kind,
+    ).toBe("log");
+  });
+
   it("falls back to text", () => {
     expect(detectContentType("plain prose with no strong structure").kind).toBe(
       "text",

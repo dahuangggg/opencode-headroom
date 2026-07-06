@@ -2,7 +2,7 @@ import type { DetectionResult } from "../compressors/types.js";
 
 const ENVELOPE_RE =
   /^\s*(?:<returncode>\s*-?\d+\s*<\/returncode>\s*)?<(?<tag>output|stdout|stderr|tool_result|result)>\n?(?<body>[\s\S]*?)\n?<\/\k<tag>>\s*$/;
-const SEARCH_COLON_RE = /^[^\s:][^:\n]*:\d+(?=[:\-\s])/;
+const SEARCH_COLON_RE = /^(?=.*[/.])[^\s:][^:\n]*:\d+(?=[:\-\s])/;
 const SEARCH_CONTEXT_RE = /^(?=.*[/.])[^\s:\n][^:\n]*-\d+(?=[:\-\s])/;
 const DIFF_HEADER_RE =
   /^(diff --git|diff --combined |diff --cc |--- a\/|@@\s+-\d+)/;
