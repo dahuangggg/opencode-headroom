@@ -14,4 +14,6 @@ yarn-error.log*
 pnpm-debug.log*
 bun-debug.log*
 target.md
-docs/superpowers/
+package-lock.json
+docs/
+headroom/
