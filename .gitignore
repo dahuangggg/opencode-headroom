@@ -1,9 +1,17 @@
 node_modules/
 dist/
 coverage/
+.headroom/
+.DS_Store
+*.sqlite-shm
+*.sqlite-wal
+*.sqlite-journal
+headroom-debug*.ndjson
 *.log
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
 pnpm-debug.log*
 bun-debug.log*
+target.md
+docs/superpowers/

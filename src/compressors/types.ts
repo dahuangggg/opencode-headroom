@@ -10,6 +10,7 @@ export interface CompressorInput {
   content: string;
   hash: string;
   query: string;
+  profile?: CompressionProfile;
 }
 
 export interface CompressorDebugSummary {
@@ -41,3 +42,4 @@ export interface CompressorResult {
   reason?: string;
   debug?: CompressionDebugInfo;
 }
+import type { CompressionProfile } from "./profile.js";

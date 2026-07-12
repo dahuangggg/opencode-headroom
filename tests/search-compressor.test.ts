@@ -57,4 +57,106 @@ describe("search compressor", () => {
       );
     }
   });
+
+  it("keeps a priority match from a file beyond the first fifteen", () => {
+    const lines = Array.from({ length: 16 }, (_, fileIndex) =>
+      Array.from({ length: 6 }, (_, matchIndex) => {
+        const fileNumber = fileIndex + 1;
+        const lineNumber = matchIndex + 1;
+        const content =
+          fileNumber === 16 && matchIndex === 5
+            ? "FATAL database corruption detected"
+            : `context ${fileNumber}-${lineNumber}`;
+        return `src/file${fileNumber}.ts:${lineNumber}:${content}`;
+      }),
+    ).flat();
+    const original = lines.join("\n");
+
+    const result = compressSearch({
+      content: original,
+      hash: createContentHash(original),
+      query: "",
+    });
+
+    expect(result.changed).toBe(true);
+    expect(result.output).toContain(
+      "src/file16.ts:6:FATAL database corruption detected",
+    );
+  });
+
+  it("ranks all files before spending the filler file budget", () => {
+    const lines = Array.from({ length: 20 }, (_, fileIndex) =>
+      Array.from({ length: 4 }, (_, matchIndex) => {
+        const fileNumber = fileIndex + 1;
+        const lineNumber = matchIndex + 1;
+        const content =
+          fileNumber === 20 && matchIndex === 2
+            ? "needle appears once"
+            : `routine context ${fileNumber}-${lineNumber}`;
+        return `src/file${fileNumber}.ts:${lineNumber}:${content}`;
+      }),
+    ).flat();
+    const original = lines.join("\n");
+
+    const result = compressSearch({
+      content: original,
+      hash: createContentHash(original),
+      query: "needle",
+    });
+
+    expect(result.changed).toBe(true);
+    expect(result.output).toContain("src/file20.ts:3:needle appears once");
+  });
+
+  it("reports omitted matches from every file consistently with debug counts", () => {
+    const lines = Array.from({ length: 16 }, (_, fileIndex) =>
+      Array.from({ length: 6 }, (_, matchIndex) => {
+        const fileNumber = fileIndex + 1;
+        const lineNumber = matchIndex + 1;
+        const content =
+          fileNumber === 16 && matchIndex === 5
+            ? "ERROR final file failed"
+            : `context ${fileNumber}-${lineNumber}`;
+        return `src/file${fileNumber}.ts:${lineNumber}:${content}`;
+      }),
+    ).flat();
+    const original = lines.join("\n");
+
+    const result = compressSearch({
+      content: original,
+      hash: createContentHash(original),
+      query: "",
+    });
+    const summarizedOmissions = [...result.output.matchAll(
+      /\[\.\.\. and (\d+) more matches in [^\]]+\]/g,
+    )].reduce((total, match) => total + Number(match[1]), 0);
+
+    expect(result.changed).toBe(true);
+    expect(result.output).toContain(
+      "[... and 2 more matches in src/file16.ts]",
+    );
+    expect(summarizedOmissions).toBe(
+      result.debug?.compressor?.dropped.matches,
+    );
+  });
+
+  it("passes through when globally required matches leave no savings", () => {
+    const original = Array.from(
+      { length: 20 },
+      (_, index) =>
+        `src/file${index + 1}.ts:1:ERROR required failure ${index + 1}`,
+    ).join("\n");
+
+    const result = compressSearch({
+      content: original,
+      hash: createContentHash(original),
+      query: "",
+    });
+
+    expect(result.changed).toBe(false);
+    expect(result.reason).toBe("no_savings");
+    expect(result.output).toBe(original);
+    expect(result.debug?.compressor?.kept.requiredMatches).toBe(20);
+    expect(result.debug?.compressor?.dropped.matches).toBe(0);
+  });
 });

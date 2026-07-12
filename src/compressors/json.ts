@@ -3,7 +3,7 @@ import type { CompressorInput, CompressorResult } from "./types.js";
 
 const PRIORITY_RE =
   /\b(error|fail|failed|fatal|critical|exception|warn|warning|todo|fixme|hack|auth|secret|password|security)\b/i;
-const MAX_ITEMS_AFTER_CRUSH = 13;
+const NESTED_ARRAY_KEYS = ["results", "data", "items"] as const;
 
 function keySignature(value: unknown): string {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
@@ -34,6 +34,116 @@ function rowHasPriority(row: unknown, query: string): boolean {
   return words.some((word) => lower.includes(word));
 }
 
+interface ArraySummary {
+  value: unknown[];
+  keptRows: number;
+  requiredRows: number;
+  droppedRows: number;
+  selections: Array<Record<string, unknown>>;
+}
+
+interface ObjectSummary {
+  value: Record<string, unknown>;
+  keptFields: number;
+  requiredFields: number;
+  droppedFields: number;
+  selections: Array<Record<string, unknown>>;
+}
+
+function summarizeArray(
+  rows: unknown[],
+  input: Pick<CompressorInput, "hash" | "query" | "profile">,
+  path?: string,
+): ArraySummary {
+  const dominant = dominantSignature(rows);
+  const required = new Set<number>([0, rows.length - 1]);
+  rows.forEach((row, index) => {
+    if (keySignature(row) !== dominant) {
+      required.add(index);
+    }
+    if (rowHasPriority(row, input.query)) {
+      required.add(index);
+    }
+  });
+
+  const selected = new Set<number>(required);
+  for (
+    let index = 0;
+    index < rows.length && selected.size < (input.profile?.json.maxItems ?? 13);
+    index += 1
+  ) {
+    selected.add(index);
+  }
+
+  const keptIndexes = [...selected].sort((a, b) => a - b);
+  const keptRows = keptIndexes.map((index) => rows[index]);
+  const droppedRows = rows.length - keptRows.length;
+  return {
+    value:
+      droppedRows > 0
+        ? [...keptRows, formatJsonSentinel(input.hash, droppedRows)]
+        : keptRows,
+    keptRows: keptRows.length,
+    requiredRows: required.size,
+    droppedRows,
+    selections: keptIndexes.slice(0, 50).map((index) => ({
+      ...(path ? { path } : {}),
+      index,
+      reason: required.has(index) ? "required" : "filler",
+    })),
+  };
+}
+
+function summarizeObject(
+  object: Record<string, unknown>,
+  input: Pick<CompressorInput, "hash" | "query" | "profile">,
+): ObjectSummary | undefined {
+  const entries = Object.entries(object);
+  const maxObjectFields = input.profile?.json.maxObjectFields ?? 13;
+  if (
+    entries.length <= maxObjectFields ||
+    Object.prototype.hasOwnProperty.call(object, "_ccr_dropped")
+  ) {
+    return undefined;
+  }
+
+  const required = new Set<number>([0, entries.length - 1]);
+  entries.forEach(([key, value], index) => {
+    const isStructured = value !== null && typeof value === "object";
+    if (isStructured || rowHasPriority({ [key]: value }, input.query)) {
+      required.add(index);
+    }
+  });
+  const selected = new Set<number>(required);
+  for (
+    let index = 0;
+    index < entries.length && selected.size < maxObjectFields;
+    index += 1
+  ) {
+    selected.add(index);
+  }
+
+  const keptIndexes = [...selected].sort((a, b) => a - b);
+  const droppedFields = entries.length - keptIndexes.length;
+  if (droppedFields <= 0) {
+    return undefined;
+  }
+  const keptEntries = keptIndexes.map((index) => entries[index]!);
+  return {
+    value: {
+      ...Object.fromEntries(keptEntries),
+      _ccr_dropped: `<<ccr:${input.hash} ${droppedFields}_fields_offloaded>>`,
+    },
+    keptFields: keptEntries.length,
+    requiredFields: required.size,
+    droppedFields,
+    selections: keptIndexes.slice(0, 50).map((index) => ({
+      field: entries[index]?.[0],
+      reason: required.has(index) ? "required" : "filler",
+    })),
+  };
+}
+
 export function compressJson(input: CompressorInput): CompressorResult {
   let parsed: unknown;
   try {
@@ -47,7 +157,69 @@ export function compressJson(input: CompressorInput): CompressorResult {
     };
   }
 
-  if (!Array.isArray(parsed) || parsed.length <= MAX_ITEMS_AFTER_CRUSH) {
+  let outputValue: unknown;
+  let arrayCount = 0;
+  let keptRows = 0;
+  let requiredRows = 0;
+  let droppedRows = 0;
+  let keptFields = 0;
+  let requiredFields = 0;
+  let droppedFields = 0;
+  const selections: Array<Record<string, unknown>> = [];
+
+  if (Array.isArray(parsed)) {
+    if (parsed.length <= (input.profile?.json.maxItems ?? 13)) {
+      return {
+        changed: false,
+        output: input.content,
+        strategy: "json",
+        reason: "not_large_array",
+      };
+    }
+
+    const summary = summarizeArray(parsed, input);
+    outputValue = summary.value;
+    arrayCount = 1;
+    keptRows = summary.keptRows;
+    requiredRows = summary.requiredRows;
+    droppedRows = summary.droppedRows;
+    selections.push(...summary.selections);
+  } else if (parsed && typeof parsed === "object") {
+    const object = parsed as Record<string, unknown>;
+    const summarizedObject = { ...object };
+    for (const key of NESTED_ARRAY_KEYS) {
+      const rows = object[key];
+      if (
+        !Array.isArray(rows) ||
+        rows.length <= (input.profile?.json.maxItems ?? 13)
+      ) {
+        continue;
+      }
+      const summary = summarizeArray(rows, input, key);
+      summarizedObject[key] = summary.value;
+      arrayCount += 1;
+      keptRows += summary.keptRows;
+      requiredRows += summary.requiredRows;
+      droppedRows += summary.droppedRows;
+      if (selections.length < 50) {
+        selections.push(...summary.selections.slice(0, 50 - selections.length));
+      }
+    }
+    outputValue = summarizedObject;
+
+    if (arrayCount === 0) {
+      const summary = summarizeObject(object, input);
+      if (summary) {
+        outputValue = summary.value;
+        keptFields = summary.keptFields;
+        requiredFields = summary.requiredFields;
+        droppedFields = summary.droppedFields;
+        selections.push(...summary.selections);
+      }
+    }
+  }
+
+  if (arrayCount === 0 && droppedFields === 0) {
     return {
       changed: false,
       output: input.content,
@@ -56,34 +228,7 @@ export function compressJson(input: CompressorInput): CompressorResult {
     };
   }
 
-  const dominant = dominantSignature(parsed);
-  const required = new Set<number>([0, parsed.length - 1]);
-  parsed.forEach((row, index) => {
-    if (keySignature(row) !== dominant) {
-      required.add(index);
-    }
-    if (rowHasPriority(row, input.query)) {
-      required.add(index);
-    }
-  });
-
-  const selected = new Set<number>(required);
-  for (
-    let index = 0;
-    index < parsed.length && selected.size < MAX_ITEMS_AFTER_CRUSH;
-    index += 1
-  ) {
-    selected.add(index);
-  }
-
-  const keptIndexes = [...selected].sort((a, b) => a - b);
-  const keptRows = keptIndexes.map((index) => parsed[index]);
-  const dropped = parsed.length - keptRows.length;
-  const selections = keptIndexes.slice(0, 50).map((index) => ({
-    index,
-    reason: required.has(index) ? "required" : "filler",
-  }));
-  if (dropped <= 0) {
+  if (droppedRows <= 0 && droppedFields <= 0) {
     return {
       changed: false,
       output: input.content,
@@ -94,19 +239,21 @@ export function compressJson(input: CompressorInput): CompressorResult {
           strategy: "json",
           originalChars: input.content.length,
           compressedChars: input.content.length,
-          kept: { rows: keptRows.length, requiredRows: required.size },
-          dropped: { rows: 0 },
+          kept: {
+            rows: keptRows,
+            requiredRows,
+            arrays: arrayCount,
+            fields: keptFields,
+            requiredFields,
+          },
+          dropped: { rows: 0, arrays: 0, fields: 0 },
           selections,
         },
       },
     };
   }
 
-  const output = JSON.stringify(
-    [...keptRows, formatJsonSentinel(input.hash, dropped)],
-    null,
-    2,
-  );
+  const output = JSON.stringify(outputValue, null, 2);
   if (output.length >= input.content.length) {
     return {
       changed: false,
@@ -118,8 +265,18 @@ export function compressJson(input: CompressorInput): CompressorResult {
           strategy: "json",
           originalChars: input.content.length,
           compressedChars: output.length,
-          kept: { rows: keptRows.length, requiredRows: required.size },
-          dropped: { rows: dropped },
+          kept: {
+            rows: keptRows,
+            requiredRows,
+            arrays: arrayCount,
+            fields: keptFields,
+            requiredFields,
+          },
+          dropped: {
+            rows: droppedRows,
+            arrays: arrayCount,
+            fields: droppedFields,
+          },
           selections,
         },
       },
@@ -135,8 +292,18 @@ export function compressJson(input: CompressorInput): CompressorResult {
         strategy: "json",
         originalChars: input.content.length,
         compressedChars: output.length,
-        kept: { rows: keptRows.length, requiredRows: required.size },
-        dropped: { rows: dropped },
+        kept: {
+          rows: keptRows,
+          requiredRows,
+          arrays: arrayCount,
+          fields: keptFields,
+          requiredFields,
+        },
+        dropped: {
+          rows: droppedRows,
+          arrays: arrayCount,
+          fields: droppedFields,
+        },
         selections,
       },
     },
