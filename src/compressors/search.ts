@@ -61,6 +61,9 @@ function queryHitCount(match: SearchMatch, query: string): number {
 }
 
 export function compressSearch(input: CompressorInput): CompressorResult {
+  const maxFiles = input.profile?.search.maxFiles ?? 15;
+  const matchesPerFile = input.profile?.search.matchesPerFile ?? 5;
+  const maxMatches = input.profile?.search.maxMatches ?? 30;
   const matches = parseSearchResults(input.content);
   if (matches.length < 20) {
     return {
@@ -79,16 +82,42 @@ export function compressSearch(input: CompressorInput): CompressorResult {
   }
 
   const required = new Map<string, SearchMatch>();
+  for (const match of matches) {
+    const queryHits = queryHitCount(match, input.query);
+    if (severityScore(match) > 0 || queryHits >= 2) {
+      required.set(`${match.file}:${match.lineNumber}`, match);
+    }
+  }
+
   const filler: SearchMatch[] = [];
-  const summaries: string[] = [];
-  for (const [file, fileMatches] of [...byFile.entries()].slice(0, 15)) {
+  const insertionOrder = new Map(
+    [...byFile.keys()].map((file, index) => [file, index]),
+  );
+  const fileScores = new Map(
+    [...byFile.entries()].map(([file, matches]) => [
+      file,
+      matches.reduce(
+        (score, match) => Math.max(score, scoreMatch(match, input.query)),
+        0,
+      ),
+    ]),
+  );
+  const rankedFiles = [...byFile.entries()].sort((left, right) => {
+    return (
+      (fileScores.get(right[0]) ?? 0) - (fileScores.get(left[0]) ?? 0) ||
+      (insertionOrder.get(left[0]) ?? 0) -
+        (insertionOrder.get(right[0]) ?? 0)
+    );
+  });
+  const fileRank = new Map(
+    rankedFiles.map(([file], index) => [file, index]),
+  );
+  for (const [, fileMatches] of rankedFiles.slice(0, maxFiles)) {
     const requiredForFile = new Map<number, SearchMatch>();
     const fillerForFile = new Map<number, SearchMatch>();
     for (const match of fileMatches) {
-      const queryHits = queryHitCount(match, input.query);
-      if (severityScore(match) > 0 || queryHits >= 2) {
+      if (required.has(`${match.file}:${match.lineNumber}`)) {
         requiredForFile.set(match.lineNumber, match);
-        required.set(`${match.file}:${match.lineNumber}`, match);
       }
     }
     const first = fileMatches[0];
@@ -103,7 +132,7 @@ export function compressSearch(input: CompressorInput): CompressorResult {
       (a, b) => scoreMatch(b, input.query) - scoreMatch(a, input.query),
     );
     for (const match of scored) {
-      if (requiredForFile.size + fillerForFile.size >= 5) {
+      if (requiredForFile.size + fillerForFile.size >= matchesPerFile) {
         break;
       }
       if (!requiredForFile.has(match.lineNumber)) {
@@ -121,10 +150,6 @@ export function compressSearch(input: CompressorInput): CompressorResult {
         (match) => !required.has(`${match.file}:${match.lineNumber}`),
       ),
     );
-    const omitted = fileMatches.length - kept.length;
-    if (omitted > 0) {
-      summaries.push(`[... and ${omitted} more matches in ${file}]`);
-    }
   }
 
   const selected = [...required.values()];
@@ -132,10 +157,14 @@ export function compressSearch(input: CompressorInput): CompressorResult {
     selected.map((match) => `${match.file}:${match.lineNumber}`),
   );
   filler.sort(
-    (a, b) => a.file.localeCompare(b.file) || a.lineNumber - b.lineNumber,
+    (a, b) =>
+      scoreMatch(b, input.query) - scoreMatch(a, input.query) ||
+      (fileRank.get(a.file) ?? Number.MAX_SAFE_INTEGER) -
+        (fileRank.get(b.file) ?? Number.MAX_SAFE_INTEGER) ||
+      a.lineNumber - b.lineNumber,
   );
   for (const match of filler) {
-    if (selected.length >= 30) {
+    if (selected.length >= maxMatches) {
       break;
     }
     const key = `${match.file}:${match.lineNumber}`;
@@ -148,6 +177,17 @@ export function compressSearch(input: CompressorInput): CompressorResult {
   selected.sort(
     (a, b) => a.file.localeCompare(b.file) || a.lineNumber - b.lineNumber,
   );
+  const selectedByFile = new Map<string, number>();
+  for (const match of selected) {
+    selectedByFile.set(match.file, (selectedByFile.get(match.file) ?? 0) + 1);
+  }
+  const summaries: string[] = [];
+  for (const [file, fileMatches] of byFile) {
+    const omitted = fileMatches.length - (selectedByFile.get(file) ?? 0);
+    if (omitted > 0) {
+      summaries.push(`[... and ${omitted} more matches in ${file}]`);
+    }
+  }
   const selections = selected.slice(0, 50).map((match) => {
     const key = `${match.file}:${match.lineNumber}`;
     return {

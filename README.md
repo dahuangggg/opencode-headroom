@@ -1,0 +1,400 @@
+# opencode-headroom
+
+`opencode-headroom` is a native OpenCode plugin that reduces large tool outputs
+before they enter the model context. It keeps the exact original output in a
+local Content-Addressable Context Repository (CCR), returns a compact result
+with a retrieval hash, and exposes bounded tools for recovering only the
+content that is needed.
+
+Version 0.2.0 adds deterministic per-tool policy, trusted file-backed output,
+bounded retrieval defaults, bounded storage, session lifecycle cleanup, and
+local cost telemetry. The plugin never learns preferences or changes policy
+from observed behavior.
+
+The implementation follows Headroom's routing, compression, and CCR concepts,
+but does not run the Headroom proxy or require Headroom's Python/Rust runtime.
+
+## Requirements
+
+- OpenCode with native plugin support
+- Bun, OpenCode's plugin runtime and the runtime for persistent SQLite storage
+- Node.js and npm only for package development and package smoke tests
+
+## Install
+
+```sh
+bun add @dahuangggg/opencode-headroom@^0.2.0
+```
+
+Add the plugin to `opencode.json`. A complete, conservative configuration is in
+[`opencode.json.example`](./opencode.json.example). The minimum configuration
+uses safe built-in defaults:
+
+```json
+{
+  "$schema": "https://opencode.ai/config.json",
+  "plugin": [["@dahuangggg/opencode-headroom", { "engine": "native" }]]
+}
+```
+
+## How it works
+
+After a tool finishes, the plugin:
+
+1. resolves one deterministic tool policy before reading any file-backed
+   output;
+2. preserves protected tools or rejects untrusted output paths;
+3. skips empty, small, already-marked, and oversized output;
+4. detects JSON, source code, search output, logs, diffs, or plain text;
+5. applies the selected compression strength and keeps the result only when it
+   saves estimated tokens;
+6. commits the exact original and the chosen retrieve defaults to CCR;
+7. records local counters and latency without recording output, arguments, path
+   content, or query text.
+
+The plugin registers:
+
+- `headroom_retrieve`, which retrieves CCR content from the current session;
+- `headroom_stats`, which reports active CCR data and local cost telemetry.
+
+Normal hook failures are fail-open: the original tool output remains in place.
+The plugin does not change provider URLs, proxy traffic, or network transports.
+
+## Configuration
+
+| Option | Default | Meaning |
+| --- | --- | --- |
+| `engine` | `"native"` | Compression engine; 0.2 supports only `native`. |
+| `thresholdTokens` | `2000` | Global estimated-token threshold. |
+| `thresholdChars` | `8000` | Global character threshold. Compression is considered when either threshold is reached. |
+| `ttlHours` | `24` | Global CCR retention time. |
+| `storage.kind` | `"auto"` | `auto`, `memory`, or `bun-sqlite`. |
+| `storage.path` | `.headroom/ccr.sqlite` | SQLite path relative to the OpenCode worktree. |
+| `storage.maxEntries` | `10000` | Maximum active CCR entries before oldest-first eviction. |
+| `storage.busyTimeoutMs` | `5000` | Non-negative SQLite lock wait in milliseconds. |
+| `toolPolicy.default.action` | `"compress"` | Fallback action for a tool with no rule or built-in match. |
+| `toolPolicy.default.strength` | `"balanced"` | Fallback compression strength. |
+| `toolPolicy.rules` | `[]` | Ordered, explicit per-tool rules; first match wins. |
+| `outputFiles.allowedRoots` | `["."]` | Roots from which trusted file-backed output may be read. |
+| `outputFiles.trustedTools` | `["Bash"]` | Tools allowed to supply file-backed output metadata. |
+| `skipTools` | `["headroom_*", "ctx_*"]` | Deprecated compatibility input translated to a preserve rule. |
+| `maxOutputChars` | `250000` | Maximum content considered for compression or file-backed reads. |
+| `debug` | `false` | Attach or write decision traces. |
+| `debugLevel` | `"summary"` | `summary` or `trace`. |
+| `debugSink` | `"metadata"` | `metadata`, `file`, or `both`. |
+| `debugPath` | `.headroom/debug.ndjson` | Worktree-relative debug file path. |
+
+Invalid enums, empty selectors, non-positive limits, and incompatible preserve
+rules fail during plugin initialization.
+
+## Deterministic tool policy
+
+`toolPolicy.rules` is the user extension point for tool-specific behavior:
+
+```json
+{
+  "toolPolicy": {
+    "default": {
+      "action": "compress",
+      "strength": "balanced"
+    },
+    "rules": [
+      {
+        "id": "keep-database-export-exact",
+        "tools": ["mcp_*_export"],
+        "action": "preserve"
+      },
+      {
+        "id": "aggressive-build-logs",
+        "tools": ["Bash"],
+        "action": "compress",
+        "strength": "aggressive",
+        "minimum": "always",
+        "ccr": { "ttlHours": 6 },
+        "retrieve": {
+          "defaultMode": "tail",
+          "maxChars": 4000
+        }
+      }
+    ]
+  }
+}
+```
+
+Rules are resolved in this order:
+
+1. non-overridable recursion protection for `headroom_*`;
+2. user rules in declaration order; the first matching rule wins;
+3. the deprecated `skipTools` list as one compatibility preserve rule;
+4. the built-in preserve default for `ctx_*`;
+5. built-in preserve defaults for `Read`, `Edit`, `Write`, and `apply_patch`;
+6. `toolPolicy.default`.
+
+Tool patterns are case-insensitive globs. `*` matches any sequence and `?`
+matches one character. Explicit user rules can override legacy, `ctx_*`, and
+exact-content tool defaults; compressing an exact-content tool should be an
+intentional decision. They cannot override `headroom_*` recursion protection.
+Marker, output-path, size, content-level code/diff, and fail-open safety checks
+still apply after policy resolution.
+
+Rule fields:
+
+- `action`: `preserve` or `compress`;
+- `strength`: `conservative`, `balanced`, or `aggressive`; stronger compression
+  uses smaller internal budgets;
+- `minimum`: `"always"` or a positive `{ "tokens", "chars" }` override. Any
+  omitted field falls back to the corresponding global threshold;
+- `ccr.ttlHours`: positive per-tool TTL override;
+- `retrieve.defaultMode`: `summary`, `head`, `tail`, or `full`;
+- `retrieve.maxChars`: positive hard limit persisted with the CCR entry.
+
+A `preserve` rule cannot also set strength, minimum, CCR, or retrieve options.
+Policy is configured explicitly and is deterministic: telemetry is
+observational only and never edits, reorders, or creates rules.
+
+### `skipTools` compatibility
+
+`skipTools` remains accepted for 0.1 configurations, but is deprecated. It is
+translated to a compatibility preserve rule after all explicit user rules.
+Move custom entries to `toolPolicy.rules`; this makes ordering and intent
+visible. `headroom_*` remains protected as a structural recursion invariant;
+`ctx_*` remains a built-in preserve default when `skipTools` is removed.
+
+## Trusted file-backed output
+
+OpenCode tools may return a truncated display plus `outputPath`, `outputFile`,
+or `outputRef` metadata. Version 0.2 reads that file only when the display is
+marked as truncated and both trust conditions pass:
+
+- the tool matches `outputFiles.trustedTools`;
+- the canonical file is inside an `outputFiles.allowedRoots` directory.
+
+The defaults allow only `Bash` and only the current worktree (`"."`). The reader
+rejects non-regular files, symlink escapes, path swaps, unreadable paths, and
+files above `maxOutputChars`; descriptor reads are also capped so a concurrently
+growing file cannot bypass the limit. On rejection, the plugin keeps the
+displayed tool output unchanged, skips compression with `source_denied` (or
+`too_large`), and exposes the reason through local stats even when debug is off.
+`outputFiles` and both subfields are optional; an omitted subfield uses its
+default. Set `trustedTools` to `[]` to disable file-backed reads; expand either
+list only for tools and directories you trust.
+
+Paths may appear in OpenCode result metadata and optional debug traces. They are
+not copied into telemetry snapshots.
+
+## Storage, lifecycle, and privacy
+
+CCR stores the exact uncompressed output and must be treated as sensitive:
+
+- `memory` is process-local and disappears when the plugin stops;
+- `bun-sqlite` persists at `storage.path`;
+- `auto` uses SQLite when Bun is available and falls back to memory only when
+  the runtime does not provide Bun, reported as `unsupported_runtime`.
+
+`auto` does not hide SQLite path, permission, migration, corruption, or lock
+errors. Under Bun those initialization failures are surfaced. Choose `memory`
+explicitly when persistence is not wanted.
+
+Both adapters prune expired entries and enforce `storage.maxEntries`. When the
+limit is reached, the oldest active entries are evicted first. SQLite uses
+`BEGIN IMMEDIATE` for writes, the configured busy timeout (5000 ms by default),
+`secure_delete=ON`, and best-effort owner-only file permissions.
+
+When OpenCode emits `session.deleted`, the plugin deletes that session's CCR
+entries and per-session telemetry. Process-global historical telemetry remains
+until the plugin is disposed. The plugin's `dispose` hook closes the store;
+SQLite close is idempotent.
+
+### SQLite schema v2
+
+Opening an older database automatically migrates it to schema version 2:
+
+- CCR entries gain persisted default retrieve mode and maximum-character
+  columns;
+- the collision-history table replaces stored original content with SHA-256
+  content digests and is rebuilt/cleaned to contain only active keys;
+- expired rows are pruned and the capacity limit is enforced;
+- the database `user_version` is set to `2`.
+
+The migration preserves active CCR originals because exact retrieval still
+requires them. A database with a schema newer than version 2 is rejected rather
+than downgraded. Back up a persistent database before upgrading if its retained
+content matters.
+
+TTL, eviction, session deletion, `secure_delete`, and the v2 digest migration
+reduce retention but are not a complete secure-erasure guarantee for backups,
+copied databases, or filesystem snapshots. Delete the database and its side
+files when immediate erasure is required.
+
+Add these patterns to each consumer repository, adjusted for custom paths:
+
+```gitignore
+.headroom/
+.DS_Store
+*.sqlite-shm
+*.sqlite-wal
+*.sqlite-journal
+headroom-debug*.ndjson
+```
+
+## Retrieval
+
+Compressed output contains a 24-character CCR hash. A bare retrieve now returns
+a bounded summary, not the full original:
+
+```text
+headroom_retrieve(hash="0123456789abcdef01234567")
+```
+
+The standard default is `summary` with a 12000-character hard limit. A matching
+tool policy may persist a different `head`, `tail`, or `full` default on that
+entry. To recover the exact original, request full explicitly and do not set a
+character cap:
+
+```text
+headroom_retrieve(hash="0123456789abcdef01234567", mode="full")
+```
+
+Available modes:
+
+- `query`: Unicode-aware matching with configurable context and match count;
+- `range`: a 1-based line interval;
+- `head` or `tail`: a bounded number of lines;
+- `summary`: metadata and a short preview;
+- `full`: the original content, optionally clipped only when `maxChars` is set.
+
+For compact single-line JSON, partial modes use a line-oriented pretty view
+without changing the exact content returned by `full`. Every bounded mode counts
+headers and truncation metadata inside its `maxChars` limit.
+
+Retrieval is session-scoped. An expired, evicted, deleted, or foreign-session
+hash returns a not-found message; rerun the original tool to recreate it.
+
+## Stats and local telemetry
+
+`headroom_stats` includes active CCR totals plus local telemetry. With
+`sessionOnly: true`, both sections are restricted to the current session. The
+telemetry section reports:
+
+- requested and active storage adapters and any bounded fallback reason;
+- compressed, skipped, and error counts plus reason distribution;
+- gross estimated token savings;
+- retrieval count, output tokens by mode, misses, and full-retrieve rate;
+- latency count, total, and maximum;
+- estimated net savings.
+
+Net savings is deliberately allowed to be negative:
+
+```text
+estimated net savings = gross estimated savings - all retrieve output tokens
+```
+
+Telemetry is in-memory and observational. Its event interface accepts only
+identifiers, enums, counts, and durations; it does not retain original output,
+tool arguments, path content, or query text. Debug traces are separate and may
+contain session, call, tool, and path metadata.
+
+## Migrating from 0.1 to 0.2
+
+Existing 0.1 configuration remains parseable, but review these behavior changes:
+
+1. Replace custom `skipTools` entries with ordered `toolPolicy.rules` using
+   `action: "preserve"`. Explicit user rules now take priority over the legacy
+   compatibility rule and overridable built-in defaults; `headroom_*` recursion
+   protection remains structural.
+2. A bare `headroom_retrieve` now returns a bounded summary. Use
+   `mode: "full"` without `maxChars` wherever exact full recovery is required.
+3. `auto` falls back only on an unsupported runtime. SQLite initialization and
+   migration failures under Bun now fail visibly.
+4. File-backed output defaults to `Bash` inside the worktree. Configure
+   `outputFiles.allowedRoots` and `trustedTools` for any additional source.
+5. CCR capacity now defaults to 10000 entries, and the SQLite busy timeout is a
+   public `storage.busyTimeoutMs` option with a 5000 ms default. Adjust either
+   value explicitly when the workload requires it.
+6. Persistent databases migrate in place to schema v2. Back up important CCR
+   data before the first 0.2 startup.
+7. Session deletion now removes its CCR entries and per-session telemetry, and
+   plugin disposal closes persistent resources.
+
+A direct replacement for a custom 0.1 skip list is:
+
+```json
+{
+  "toolPolicy": {
+    "rules": [
+      {
+        "id": "preserve-custom-tools",
+        "tools": ["my_exact_tool", "mcp_*_export"],
+        "action": "preserve"
+      }
+    ]
+  }
+}
+```
+
+## Troubleshooting
+
+### An output was not compressed
+
+It may match a preserve rule, be below both selected thresholds, contain an
+existing CCR marker, exceed `maxOutputChars`, be detected as exact code or a
+diff, or produce no estimated savings. Enable summary debug metadata to see the
+resolved rule, strength, thresholds, and decision reason.
+
+### SQLite was not created
+
+Check `headroom_stats` for `storage adapter`. Outside Bun, `auto` reports
+`auto -> memory` with `unsupported_runtime`. Under Bun, inspect the surfaced
+path, permission, migration, or lock error; 0.2 will not silently switch to
+memory. Use `storage.kind: "memory"` explicitly if that is the desired behavior.
+
+### A hash cannot be retrieved
+
+It may belong to another session or have expired, been evicted, or been deleted
+with its session. A bare call is now a summary; use explicit `mode: "full"` for
+exact recovery.
+
+### A file-backed result was ignored
+
+The tool must be trusted, the canonical path must remain within an allowed
+root, the target must be a regular file, and its byte and character sizes must
+fit `maxOutputChars`. Debug metadata records a bounded rejection reason.
+
+## Development and release checks
+
+```sh
+bun install
+bun test tests
+bun run typecheck
+npm run build
+bun run bench:check
+bun run bench:perf
+npm run lint:package
+npm run test:package
+```
+
+`bun.lock` is the canonical lockfile. `bench:check` is deterministic and does
+not rewrite the tracked cost report; `bench:report` is the explicit report
+writer. `bench:perf` measures fixed-seed router, Store put/get, compression,
+bounded retrieval, complete plugin-hook, SQLite worker-concurrent writes, and
+cold-start p50/p95/max results without writing a report. It blocks only when
+the P0 10 KiB memory-backed `tool.execute.after` p95 is not below 50 ms; the
+larger and SQLite rows remain baselines until enough stable CI history exists.
+`lint:package` checks npm-normalized manifest metadata, self-dependencies,
+public export paths, packed export targets, and conflict-copy files. The
+package smoke removes `dist`, packs from a clean state, validates
+the intended surface, installs into a temporary consumer, runs `npm ls --all`,
+typechecks the public configuration from a TypeScript consumer, imports both
+public entry points, verifies Node's observable `auto -> memory` unsupported-
+runtime fallback stats, and initializes the plugin with Bun.
+
+Before publication, also load the freshly installed tarball through a real
+OpenCode host. The current 0.2 build was verified with OpenCode 1.17.13 by
+pointing the host at the temporary consumer's installed `dist/plugin.js`; it
+initialized SQLite schema v2 without making a model request.
+
+See [`DESIGN.md`](./DESIGN.md) for module boundaries and release invariants.
+
+## License
+
+Apache-2.0. See [`LICENSE`](./LICENSE).

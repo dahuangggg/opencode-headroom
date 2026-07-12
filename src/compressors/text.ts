@@ -1,7 +1,6 @@
 import { formatRetrieveMarker } from "../markers.js";
 import type { CompressorInput, CompressorResult } from "./types.js";
 
-const TARGET_RATIO = 0.5;
 const MIN_SEGMENTS_FOR_CRUSH = 6;
 const MIN_SEGMENT_CHARS = 12;
 const NEAR_DUP_THRESHOLD = 0.85;
@@ -179,7 +178,10 @@ export function compressText(input: CompressorInput): CompressorResult {
   const queryWords = tokenize(input.query).filter((word) => word.length > 2);
   const segmentTokens = segments.map((segment) => tokenize(segment));
   const totalChars = segments.reduce((sum, segment) => sum + segment.length, 0);
-  const targetChars = Math.max(1, Math.floor(totalChars * TARGET_RATIO));
+  const targetChars = Math.max(
+    1,
+    Math.floor(totalChars * (input.profile?.text.targetRatio ?? 0.5)),
+  );
   const selected = new Set<number>();
   const seenShingles = new Set<string>();
   let keptChars = 0;

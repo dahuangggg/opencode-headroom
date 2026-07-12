@@ -21,12 +21,7 @@ export interface ClassifiedLogLine {
 }
 
 const MIN_LINES_FOR_COMPRESSION = 50;
-const MAX_ERRORS = 10;
-const MAX_STACK_TRACES = 3;
-const STACK_TRACE_MAX_LINES = 20;
-const MAX_WARNINGS = 5;
-const MAX_TOTAL_LINES = 100;
-const CONTEXT_LINES = 3;
+const MAX_TRACE_SCAN_LINES = 24;
 
 type TraceFlavor = "python" | "js" | "java" | "rust" | "go";
 
@@ -172,7 +167,7 @@ export function classifyLogLines(lines: string[]): ClassifiedLogLine[] {
     };
 
     if (active) {
-      if (traceLines >= STACK_TRACE_MAX_LINES || terminatesTrace(active, content)) {
+      if (traceLines >= MAX_TRACE_SCAN_LINES || terminatesTrace(active, content)) {
         active = undefined;
         traceLines = 0;
         const newFlavor = traceFlavorFor(content);
@@ -332,6 +327,14 @@ function omittedSummary(omitted: number, stats: Record<string, number>): string 
 }
 
 export function compressLog(input: CompressorInput): CompressorResult {
+  const profile = input.profile?.log ?? {
+    maxErrors: 10,
+    maxStackTraces: 3,
+    stackTraceMaxLines: 20,
+    maxWarnings: 5,
+    maxTotalLines: 100,
+    contextLines: 3,
+  };
   const lines = input.content.split(/\r?\n/);
   if (lines.length < MIN_LINES_FOR_COMPRESSION) {
     return {
@@ -349,18 +352,18 @@ export function compressLog(input: CompressorInput): CompressorResult {
 
   for (const line of selectWithFirstLast(
     classified.filter((line) => line.level === "ERROR"),
-    MAX_ERRORS,
+    profile.maxErrors,
   )) {
     addLine(required, line);
   }
   for (const line of selectWithFirstLast(
     classified.filter((line) => line.level === "FAIL"),
-    MAX_ERRORS,
+    profile.maxErrors,
   )) {
     addLine(required, line);
   }
-  for (const group of stackTraceGroups(classified).slice(0, MAX_STACK_TRACES)) {
-    for (const line of group.slice(0, STACK_TRACE_MAX_LINES)) {
+  for (const group of stackTraceGroups(classified).slice(0, profile.maxStackTraces)) {
+    for (const line of group.slice(0, profile.stackTraceMaxLines)) {
       addLine(required, line);
     }
   }
@@ -370,15 +373,15 @@ export function compressLog(input: CompressorInput): CompressorResult {
 
   for (const line of dedupeSimilar(
     classified.filter((line) => line.level === "WARN"),
-  ).slice(0, MAX_WARNINGS)) {
+  ).slice(0, profile.maxWarnings)) {
     addLine(filler, line);
   }
 
   const contextSeed = [...required.values(), ...filler.values()];
   for (const line of contextSeed) {
     for (
-      let index = Math.max(0, line.index - CONTEXT_LINES);
-      index <= Math.min(classified.length - 1, line.index + CONTEXT_LINES);
+      let index = Math.max(0, line.index - profile.contextLines);
+      index <= Math.min(classified.length - 1, line.index + profile.contextLines);
       index += 1
     ) {
       if (!required.has(index) && !filler.has(index)) {
@@ -392,7 +395,7 @@ export function compressLog(input: CompressorInput): CompressorResult {
     (a, b) => b.score - a.score || a.index - b.index,
   );
   for (const line of fillerByScore) {
-    if (selected.size >= MAX_TOTAL_LINES) {
+    if (selected.size >= profile.maxTotalLines) {
       break;
     }
     addLine(selected, line);

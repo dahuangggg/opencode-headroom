@@ -1,10 +1,13 @@
 import { containsCCRMarker } from "../markers.js";
+import { compressionProfileForStrength } from "../compressors/profile.js";
 import { createContentHash } from "../store/ccr.js";
 import type { CCRStore } from "../store/types.js";
 import { estimateTokens } from "../token.js";
+import { retrieveEntry } from "./retrieve.js";
 import { compressByContentType } from "./router.js";
 import type {
   CompressionEngine,
+  RetrieveRequest,
   RetrieveResult,
   StatsResult,
   ToolOutputCompressionInput,
@@ -45,10 +48,12 @@ export class NativeHeadroomCompatibleEngine implements CompressionEngine {
     }
 
     const hash = createContentHash(input.output);
+    const profile = compressionProfileForStrength(input.strength);
     const compressed = compressByContentType({
       content: input.output,
       hash,
       query: queryFromArgs(input.args),
+      profile,
     });
     const compressedTokens = estimateTokens(compressed.output);
     if (!compressed.changed || compressedTokens >= originalTokens) {
@@ -76,15 +81,35 @@ export class NativeHeadroomCompatibleEngine implements CompressionEngine {
       originalTokens,
       compressedTokens,
       ttlMs: input.ttlMs,
+      retrieveDefaults: input.retrieveDefaults,
+      contentForHash: (committedHash) => {
+        if (committedHash === hash) {
+          return {
+            compressedContent: compressed.output,
+            compressedTokens,
+          };
+        }
+
+        const finalized = compressByContentType({
+          content: input.output,
+          hash: committedHash,
+          query: queryFromArgs(input.args),
+          profile,
+        });
+        return {
+          compressedContent: finalized.output,
+          compressedTokens: estimateTokens(finalized.output),
+        };
+      },
     });
 
     return {
       changed: true,
-      output: compressed.output,
+      output: entry.compressedContent,
       strategy: compressed.strategy,
       hash: entry.hash,
       originalTokens,
-      compressedTokens,
+      compressedTokens: entry.compressedTokens,
       debug: {
         ...(compressed.debug ?? {}),
         ccr: { hash: entry.hash, stored: true },
@@ -92,8 +117,12 @@ export class NativeHeadroomCompatibleEngine implements CompressionEngine {
     };
   }
 
-  async retrieve(hash: string): Promise<RetrieveResult> {
-    const entry = await this.store.get(hash);
+  async retrieve(
+    hash: string,
+    request?: RetrieveRequest,
+    sessionID?: string,
+  ): Promise<RetrieveResult> {
+    const entry = await this.store.get(hash, sessionID);
     if (!entry) {
       return {
         found: false,
@@ -101,7 +130,7 @@ export class NativeHeadroomCompatibleEngine implements CompressionEngine {
           "Entry not found or expired. Re-run the command or re-read the file to recover the original output.",
       };
     }
-    return { found: true, output: entry.originalContent };
+    return { found: true, output: retrieveEntry(entry, request) };
   }
 
   async stats(sessionID?: string): Promise<StatsResult> {

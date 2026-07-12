@@ -9,7 +9,7 @@ import type {
 } from "../compressors/types.js";
 
 const ENVELOPE_RE =
-  /^\s*(?:<returncode>\s*-?\d+\s*<\/returncode>\s*)?<(?<tag>output|stdout|stderr|tool_result|result)>\n?(?<body>[\s\S]*?)\n?<\/\k<tag>>\s*$/;
+  /^(?<prefix>\s*(?:<returncode>\s*-?\d+\s*<\/returncode>\s*)?<(?<tag>output|stdout|stderr|tool_result|result)>\n?)(?<body>[\s\S]*?)(?<suffix>\n?<\/\k<tag>>\s*)$/;
 const SEARCH_COLON_RE = /^(?<path>[^\s:][^:\n]*):\d+(?=[:\-\s])/;
 const SEARCH_CONTEXT_RE = /^(?<path>[^\s:\n][^:\n]*)-\d+(?=[:\-\s])/;
 const DIFF_HEADER_RE =
@@ -25,11 +25,160 @@ const LOG_PATTERNS = [
   /Traceback \(most recent call last\)/,
   /^\s*at\s+[\w.$]+\(/,
 ];
+const CODE_DECLARATION_PATTERNS = [
+  /^\s*(?:export\s+)?(?:default\s+)?(?:async\s+)?function\s+[$\w]+\s*\(/,
+  /^\s*(?:export\s+)?(?:abstract\s+)?(?:class|interface|type|enum|namespace)\s+[$\w]+/,
+  /^\s*(?:async\s+)?def\s+\w+\s*\(/,
+  /^\s*class\s+\w+(?:\([^)]*\))?\s*:/,
+  /^\s*(?:pub(?:\([^)]*\))?\s+)?(?:async\s+)?fn\s+\w+\s*\(/,
+  /^\s*(?:package\s+\w+|func\s+(?:\([^)]*\)\s*)?\w+\s*\()/,
+  /^\s*#include\s+[<"]|^\s*using\s+namespace\s+\w+/,
+];
+const CODE_SUPPORT_PATTERNS = [
+  /^\s*(?:const|let|var)\s+[$\w]+(?:\s*:[^=]+)?\s*=/,
+  /^\s*(?:return|throw|yield)\b/,
+  /^\s*(?:if|for|while|switch|catch)\s*\(/,
+  /^\s*(?:import|export)\s+/,
+  /^\s*(?:from\s+\S+\s+import|import\s+\S+)/,
+  /^\s*(?:pub\s+)?(?:struct|impl|trait|enum)\b/,
+];
 
-export function stripDetectionEnvelope(content: string): string {
+interface RoutedContent {
+  payload: string;
+  render(payload: string): string;
+}
+
+interface ExplicitSection {
+  tag: string;
+  before: string;
+  opening: string;
+  leading: string;
+  payload: string;
+  trailing: string;
+  closing: string;
+}
+
+interface ExplicitSections {
+  sections: ExplicitSection[];
+  tail: string;
+}
+
+function routeContent(content: string): RoutedContent {
   const match = ENVELOPE_RE.exec(content);
   const body = match?.groups?.body;
-  return body && body.trim() ? body.trim() : content;
+  const prefix = match?.groups?.prefix;
+  const suffix = match?.groups?.suffix;
+  if (!body || !body.trim() || prefix === undefined || suffix === undefined) {
+    return {
+      payload: content,
+      render: (payload) => payload,
+    };
+  }
+
+  return {
+    payload: body.trim(),
+    render: (payload) => `${prefix}${payload}${suffix}`,
+  };
+}
+
+function routeExplicitSections(content: string): ExplicitSections | undefined {
+  const sectionPattern =
+    /<(?<tag>stdout|stderr|output|tool_result|result)>(?<body>[\s\S]*?)<\/\k<tag>>/g;
+  const sections: ExplicitSection[] = [];
+  let cursor = 0;
+  for (const match of content.matchAll(sectionPattern)) {
+    const tag = match.groups?.tag;
+    const body = match.groups?.body;
+    const index = match.index;
+    if (!tag || body === undefined || index === undefined) {
+      return undefined;
+    }
+
+    const before = content.slice(cursor, index);
+    const allowedGap =
+      sections.length === 0
+        ? /^\s*(?:<returncode>\s*-?\d+\s*<\/returncode>\s*)?$/
+        : /^\s*$/;
+    if (!allowedGap.test(before)) {
+      return undefined;
+    }
+
+    const leading = /^\s*/u.exec(body)?.[0] ?? "";
+    const remainder = body.slice(leading.length);
+    const trailing = remainder ? /\s*$/u.exec(remainder)?.[0] ?? "" : "";
+    const payload = remainder.slice(0, remainder.length - trailing.length);
+    sections.push({
+      tag,
+      before,
+      opening: `<${tag}>`,
+      leading,
+      payload,
+      trailing,
+      closing: `</${tag}>`,
+    });
+    cursor = index + match[0].length;
+  }
+
+  const tail = content.slice(cursor);
+  if (sections.length < 2 || !/^\s*$/.test(tail)) {
+    return undefined;
+  }
+  return { sections, tail };
+}
+
+function compressExplicitSections(
+  input: CompressorInput,
+): CompressorResult | undefined {
+  const routed = routeExplicitSections(input.content);
+  if (!routed) {
+    return undefined;
+  }
+
+  let changed = false;
+  const debugSections: Array<Record<string, unknown>> = [];
+  const output = [
+    ...routed.sections.map((section) => {
+      const result = compressByContentType({ ...input, content: section.payload });
+      changed ||= result.changed;
+      debugSections.push({
+        tag: section.tag,
+        kind: result.debug?.router?.kind ?? result.strategy,
+        changed: result.changed,
+        ...(result.reason ? { reason: result.reason } : {}),
+      });
+      return [
+        section.before,
+        section.opening,
+        section.leading,
+        result.output,
+        section.trailing,
+        section.closing,
+      ].join("");
+    }),
+    routed.tail,
+  ].join("");
+  const debug = {
+    router: {
+      kind: "text" as const,
+      confidence: 1,
+      metadata: { mixed: true, sections: debugSections },
+    },
+  };
+
+  if (!changed || output.length >= input.content.length) {
+    return {
+      changed: false,
+      output: input.content,
+      strategy: "text",
+      reason: changed ? "mixed_no_savings" : "mixed_passthrough",
+      debug,
+    };
+  }
+  return { changed: true, output, strategy: "text", debug };
+}
+
+export function stripDetectionEnvelope(content: string): string {
+  return routeContent(content).payload;
 }
 
 function isSearchLine(line: string): boolean {
@@ -43,8 +192,40 @@ function isSearchLine(line: string): boolean {
   return path.includes("/") || path.includes("\\") || filename.includes(".");
 }
 
-export function detectContentType(content: string): DetectionResult {
-  const probe = stripDetectionEnvelope(content);
+function detectCode(content: string): DetectionResult | undefined {
+  const lines = content
+    .split(/\r?\n/)
+    .slice(0, 100)
+    .filter((line) => line.trim());
+  let declarations = 0;
+  let patternMatches = 0;
+  for (const line of lines) {
+    if (CODE_DECLARATION_PATTERNS.some((pattern) => pattern.test(line))) {
+      declarations += 1;
+      patternMatches += 1;
+      continue;
+    }
+    if (CODE_SUPPORT_PATTERNS.some((pattern) => pattern.test(line))) {
+      patternMatches += 1;
+    }
+  }
+
+  if (declarations < 1 || patternMatches < 3) {
+    return undefined;
+  }
+
+  return {
+    kind: "text",
+    confidence: Math.min(1, 0.5 + patternMatches * 0.03),
+    metadata: {
+      code: true,
+      declarations,
+      patternMatches,
+    },
+  };
+}
+
+function detectPayloadType(probe: string): DetectionResult {
   if (!probe.trim()) {
     return { kind: "text", confidence: 0, metadata: {} };
   }
@@ -72,6 +253,11 @@ export function detectContentType(content: string): DetectionResult {
       confidence: Math.min(1, 0.5 + diffHeaders * 0.2 + diffChanges * 0.05),
       metadata: { diffHeaders, diffChanges },
     };
+  }
+
+  const code = detectCode(probe);
+  if (code) {
+    return code;
   }
 
   const searchLines = firstLines.slice(0, 100).filter((line) => line.trim());
@@ -102,10 +288,21 @@ export function detectContentType(content: string): DetectionResult {
   return { kind: "text", confidence: 0.5, metadata: {} };
 }
 
+export function detectContentType(content: string): DetectionResult {
+  return detectPayloadType(routeContent(content).payload);
+}
+
 export function compressByContentType(input: CompressorInput): CompressorResult {
-  const detection = detectContentType(input.content);
+  const mixed = compressExplicitSections(input);
+  if (mixed) {
+    return mixed;
+  }
+
+  const routed = routeContent(input.content);
+  const detection = detectPayloadType(routed.payload);
   const attachRouterDebug = (result: CompressorResult): CompressorResult => ({
     ...result,
+    output: result.changed ? routed.render(result.output) : input.content,
     debug: {
       ...(result.debug ?? {}),
       router: {
@@ -115,6 +312,15 @@ export function compressByContentType(input: CompressorInput): CompressorResult 
       },
     },
   });
+
+  if (detection.metadata.code === true) {
+    return attachRouterDebug({
+      changed: false,
+      output: input.content,
+      strategy: "text",
+      reason: "code_passthrough",
+    });
+  }
 
   if (detection.kind === "diff") {
     return attachRouterDebug({
@@ -134,13 +340,13 @@ export function compressByContentType(input: CompressorInput): CompressorResult 
     });
   }
   if (detection.kind === "json") {
-    return attachRouterDebug(compressJson(input));
+    return attachRouterDebug(compressJson({ ...input, content: routed.payload }));
   }
   if (detection.kind === "search") {
-    return attachRouterDebug(compressSearch(input));
+    return attachRouterDebug(compressSearch({ ...input, content: routed.payload }));
   }
   if (detection.kind === "log") {
-    return attachRouterDebug(compressLog(input));
+    return attachRouterDebug(compressLog({ ...input, content: routed.payload }));
   }
-  return attachRouterDebug(compressText(input));
+  return attachRouterDebug(compressText({ ...input, content: routed.payload }));
 }

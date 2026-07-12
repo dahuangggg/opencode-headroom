@@ -13,6 +13,8 @@ describe("normalizeConfig", () => {
     expect(config.storage).toEqual({
       kind: "auto",
       path: ".headroom/ccr.sqlite",
+      maxEntries: 10_000,
+      busyTimeoutMs: 5_000,
     });
     expect(config.skipTools).toEqual(["headroom_*", "ctx_*"]);
     expect(config.maxOutputChars).toBe(250000);
@@ -29,7 +31,16 @@ describe("normalizeConfig", () => {
     expect(
       normalizeConfig({ storage: { kind: "bun-sqlite", path: "/tmp/x.db" } })
         .storage,
-    ).toEqual({ kind: "bun-sqlite", path: "/tmp/x.db" });
+    ).toEqual({
+      kind: "bun-sqlite",
+      path: "/tmp/x.db",
+      maxEntries: 10_000,
+      busyTimeoutMs: 5_000,
+    });
+    expect(
+      normalizeConfig({ storage: { kind: "memory", maxEntries: 25 } }).storage
+        .maxEntries,
+    ).toBe(25);
   });
 
   it("accepts debug trace options", () => {
@@ -52,6 +63,61 @@ describe("normalizeConfig", () => {
     expect(() => normalizeConfig({ engine: "headroom-http" as never })).toThrow(
       /Unsupported engine/,
     );
+  });
+
+  it("rejects invalid limits, storage, and debug enums at initialization", () => {
+    expect(() => normalizeConfig({ thresholdTokens: 0 })).toThrow(
+      /thresholdTokens must be a positive finite number/,
+    );
+    expect(() => normalizeConfig({ ttlHours: Number.NaN })).toThrow(
+      /ttlHours must be a positive finite number/,
+    );
+    expect(() => normalizeConfig({ maxOutputChars: 1.5 })).toThrow(
+      /maxOutputChars must be a positive safe integer/,
+    );
+    expect(() =>
+      normalizeConfig({ storage: { kind: "remote" as never } }),
+    ).toThrow(/storage\.kind/);
+    expect(() =>
+      normalizeConfig({ storage: { maxEntries: 0 } }),
+    ).toThrow(/storage\.maxEntries.*positive safe integer/);
+    expect(() =>
+      normalizeConfig({ storage: { busyTimeoutMs: -1 } }),
+    ).toThrow(/storage\.busyTimeoutMs.*non-negative safe integer/);
+    expect(() =>
+      normalizeConfig({ debugLevel: "verbose" as never }),
+    ).toThrow(/debugLevel/);
+    expect(() =>
+      normalizeConfig({ skipTools: "Bash" as never }),
+    ).toThrow(/skipTools must be an array/);
+    expect(() =>
+      normalizeConfig({ storage: { path: 42 as never } }),
+    ).toThrow(/storage\.path/);
+  });
+
+  it("validates trusted output-file selectors", () => {
+    expect(() =>
+      normalizeConfig({ outputFiles: { trustedTools: [""] } }),
+    ).toThrow(/trustedTools.*non-empty/i);
+    expect(() =>
+      normalizeConfig({ outputFiles: { allowedRoots: ["   "] } }),
+    ).toThrow(/allowedRoots.*non-empty/i);
+    expect(() =>
+      normalizeConfig({
+        outputFiles: { allowedRoots: "." as never },
+      }),
+    ).toThrow(/allowedRoots must be an array/i);
+    expect(() =>
+      normalizeConfig({
+        outputFiles: { trustedTools: [42 as never] },
+      }),
+    ).toThrow(/trustedTools.*non-empty strings/i);
+  });
+
+  it("rejects null tool policy defaults", () => {
+    expect(() =>
+      normalizeConfig({ toolPolicy: { default: null } as never }),
+    ).toThrow(/toolPolicy\.default must be an object/i);
   });
 });
 

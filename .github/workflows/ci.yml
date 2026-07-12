@@ -1,0 +1,55 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    name: Verify
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7.0.0
+
+      - name: Set up Bun
+        uses: oven-sh/setup-bun@v2.2.0
+        with:
+          bun-version: 1.3.11
+
+      - name: Install dependencies from lockfile
+        run: bun install --frozen-lockfile
+
+      - name: Typecheck
+        run: bun run typecheck
+
+      - name: Run full test suite
+        run: bun run test
+
+      - name: Check benchmark quality gates
+        run: bun run bench:check
+
+      - name: Check P0 performance gate and record baselines
+        run: bun run bench:perf
+
+      - name: Clean build
+        run: bun run build
+
+      - name: Lint package manifest and packed exports
+        run: bun run lint:package
+
+      - name: Test package artifact
+        run: bun run test:package
+
+      - name: Verify checks did not modify tracked files
+        if: always()
+        run: git diff --exit-code
