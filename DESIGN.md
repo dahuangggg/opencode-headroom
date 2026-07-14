@@ -165,15 +165,17 @@ tokens than the original. The counter can wrap a locally available
 model-specific tokenizer; otherwise it uses deterministic calibration for
 prose, CJK, code, and high-entropy content.
 
-Search and log filler budgets are adaptive within those private ceilings. The
-sizer follows Headroom's information-saturation design: bounded 64-bit SimHash
-grouping estimates diversity, cumulative bigram coverage supplies a Kneedle
-candidate, profile bias maps conservative/balanced/aggressive behavior, and a
-level-1 zlib ratio check can expand an under-representative prefix. Spaceless
-CJK content uses character bigrams. Search priority matches and selected log
-errors, failures, stack traces, and summaries are assembled before sizing; only
-ranked filler consumes the resulting `k`. The debug decision contains numeric
-and enum diagnostics only, never source rows or query text.
+Search, log, JSON-array, and tabular filler budgets are adaptive within those
+private ceilings. The sizer follows Headroom's information-saturation design:
+bounded 64-bit SimHash grouping estimates diversity, cumulative bigram coverage
+supplies a Kneedle candidate, profile bias maps conservative/balanced/aggressive
+behavior, and a level-1 zlib ratio check can expand an under-representative
+prefix. Spaceless CJK content uses character bigrams. JSON and table filler is
+ranked by normalized token rarity and deterministic distributed anchors;
+structural, semantic, query, and three-standard-deviation numeric outliers are
+selected before sizing. Required rows never consume the resulting filler `k`.
+The debug decision contains numeric and enum diagnostics only, never source rows
+or query text.
 
 ### Bounded session context and repetition
 
