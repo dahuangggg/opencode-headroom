@@ -21,7 +21,7 @@
 
 ## Compression Coverage
 
-- [ ] Add multi-stage candidate pipeline and protected-fact gate.
+- [x] Add multi-stage candidate pipeline and protected-fact gate.
 - [ ] Add code-aware compression.
 - [ ] Add diff compression.
 - [ ] Add tabular compression.

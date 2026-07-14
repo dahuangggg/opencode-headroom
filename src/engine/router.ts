@@ -2,6 +2,7 @@ import { compressJson } from "../compressors/json.js";
 import { compressLog } from "../compressors/log.js";
 import { compressSearch } from "../compressors/search.js";
 import { compressText } from "../compressors/text.js";
+import { gateCompressionCandidate } from "./pipeline.js";
 import type {
   CompressorInput,
   CompressorResult,
@@ -174,6 +175,20 @@ function compressExplicitSections(
       debug,
     };
   }
+  const gate = gateCompressionCandidate({
+    original: input.content,
+    candidate: output,
+    kind: "text",
+  });
+  if (!gate.accepted) {
+    return {
+      changed: false,
+      output: input.content,
+      strategy: "text",
+      reason: `candidate_${gate.reason}`,
+      debug,
+    };
+  }
   return { changed: true, output, strategy: "text", debug };
 }
 
@@ -300,18 +315,33 @@ export function compressByContentType(input: CompressorInput): CompressorResult 
 
   const routed = routeContent(input.content);
   const detection = detectPayloadType(routed.payload);
-  const attachRouterDebug = (result: CompressorResult): CompressorResult => ({
-    ...result,
-    output: result.changed ? routed.render(result.output) : input.content,
-    debug: {
-      ...(result.debug ?? {}),
-      router: {
-        kind: detection.kind,
-        confidence: detection.confidence,
-        metadata: detection.metadata,
+  const attachRouterDebug = (result: CompressorResult): CompressorResult => {
+    const gate = result.changed
+      ? gateCompressionCandidate({
+          original: routed.payload,
+          candidate: result.output,
+          kind: detection.kind,
+        })
+      : undefined;
+    const accepted = !gate || gate.accepted;
+    return {
+      ...result,
+      changed: result.changed && accepted,
+      output:
+        result.changed && accepted ? routed.render(result.output) : input.content,
+      ...(!accepted && gate && !gate.accepted
+        ? { reason: `candidate_${gate.reason}` }
+        : {}),
+      debug: {
+        ...(result.debug ?? {}),
+        router: {
+          kind: detection.kind,
+          confidence: detection.confidence,
+          metadata: detection.metadata,
+        },
       },
-    },
-  });
+    };
+  };
 
   if (detection.metadata.code === true) {
     return attachRouterDebug({
