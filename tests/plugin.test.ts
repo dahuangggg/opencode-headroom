@@ -114,6 +114,48 @@ describe("OpenCode plugin", () => {
     expect(output.metadata.headroom.strategy).toBe("search");
   });
 
+  it("compresses modest search output with the default coding profile", async () => {
+    const plugin = await HeadroomNativePlugin(pluginInput(), {
+      storage: { kind: "memory" },
+    });
+    const output = { title: "Bash", output: searchFixture(), metadata: {} };
+
+    await plugin["tool.execute.after"]!(
+      {
+        tool: "Bash",
+        sessionID: "coding-profile",
+        callID: "c1",
+        args: { command: "rg auth" },
+      },
+      output,
+    );
+
+    expect(output.output).toContain("[Retrieve more: hash=");
+    expect(output.metadata.headroom.strategy).toBe("search");
+  });
+
+  it("preserves the previous threshold behavior with the legacy profile", async () => {
+    const plugin = await HeadroomNativePlugin(pluginInput(), {
+      profile: "legacy",
+      storage: { kind: "memory" },
+    });
+    const original = searchFixture();
+    const output = { title: "Bash", output: original, metadata: {} };
+
+    await plugin["tool.execute.after"]!(
+      {
+        tool: "Bash",
+        sessionID: "legacy-profile",
+        callID: "c1",
+        args: { command: "rg auth" },
+      },
+      output,
+    );
+
+    expect(output.output).toBe(original);
+    expect(output.metadata.headroom).toBeUndefined();
+  });
+
   it("stores full OpenCode outputPath content when display output was truncated", async () => {
     const dir = mkdtempSync(join(tmpdir(), "opencode-headroom-output-"));
     const fullOutputPath = join(dir, "tool-output.txt");

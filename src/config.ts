@@ -15,6 +15,7 @@ import {
 } from "./store/types.js";
 
 export type HeadroomEngine = "native";
+export type HeadroomProfile = "coding" | "legacy";
 
 export type StorageKind = "auto" | "memory" | "bun-sqlite";
 export type DebugLevel = "summary" | "trace";
@@ -29,6 +30,7 @@ export interface HeadroomStorageConfig {
 
 export interface HeadroomPluginOptions {
   engine?: HeadroomEngine;
+  profile?: HeadroomProfile;
   thresholdTokens?: number;
   thresholdChars?: number;
   ttlHours?: number;
@@ -45,6 +47,7 @@ export interface HeadroomPluginOptions {
 
 export interface NormalizedHeadroomConfig {
   engine: HeadroomEngine;
+  profile: HeadroomProfile;
   thresholdTokens: number;
   thresholdChars: number;
   ttlHours: number;
@@ -61,8 +64,9 @@ export interface NormalizedHeadroomConfig {
 
 export const DEFAULT_HEADROOM_CONFIG: NormalizedHeadroomConfig = {
   engine: "native",
-  thresholdTokens: 2000,
-  thresholdChars: 8000,
+  profile: "coding",
+  thresholdTokens: 25,
+  thresholdChars: 25,
   ttlHours: 24,
   storage: {
     kind: "auto",
@@ -78,6 +82,14 @@ export const DEFAULT_HEADROOM_CONFIG: NormalizedHeadroomConfig = {
   debugPath: ".headroom/debug.ndjson",
   toolPolicy: normalizeToolPolicy(undefined, ["headroom_*", "ctx_*"]),
   outputFiles: normalizeOutputFilesConfig(undefined),
+};
+
+const PROFILE_THRESHOLDS: Record<
+  HeadroomProfile,
+  Pick<NormalizedHeadroomConfig, "thresholdTokens" | "thresholdChars">
+> = {
+  coding: { thresholdTokens: 25, thresholdChars: 25 },
+  legacy: { thresholdTokens: 2000, thresholdChars: 8000 },
 };
 
 function assertPositiveFinite(value: number, label: string): void {
@@ -102,6 +114,9 @@ export function normalizeConfig(
   if (options.engine !== undefined && options.engine !== "native") {
     throw new Error(`Unsupported engine: ${String(options.engine)}`);
   }
+  if (options.profile !== undefined) {
+    assertEnum(options.profile, ["coding", "legacy"], "profile");
+  }
   if (
     options.storage !== undefined &&
     (!options.storage ||
@@ -121,10 +136,12 @@ export function normalizeConfig(
     ? [...options.skipTools]
     : [...DEFAULT_HEADROOM_CONFIG.skipTools];
 
+  const profile = options.profile ?? DEFAULT_HEADROOM_CONFIG.profile;
+  const profileThresholds = PROFILE_THRESHOLDS[profile];
   const thresholdTokens =
-    options.thresholdTokens ?? DEFAULT_HEADROOM_CONFIG.thresholdTokens;
+    options.thresholdTokens ?? profileThresholds.thresholdTokens;
   const thresholdChars =
-    options.thresholdChars ?? DEFAULT_HEADROOM_CONFIG.thresholdChars;
+    options.thresholdChars ?? profileThresholds.thresholdChars;
   const ttlHours = options.ttlHours ?? DEFAULT_HEADROOM_CONFIG.ttlHours;
   const maxOutputChars =
     options.maxOutputChars ?? DEFAULT_HEADROOM_CONFIG.maxOutputChars;
@@ -168,6 +185,7 @@ export function normalizeConfig(
 
   return {
     engine: options.engine ?? DEFAULT_HEADROOM_CONFIG.engine,
+    profile,
     thresholdTokens,
     thresholdChars,
     ttlHours,

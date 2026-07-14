@@ -3,7 +3,7 @@ export {
   HeadroomNativePlugin,
   HeadroomNativePlugin as server,
 } from "./plugin.js";
-export type { HeadroomPluginOptions } from "./config.js";
+export type { HeadroomPluginOptions, HeadroomProfile } from "./config.js";
 export type {
   CompressionEngine,
   ToolOutputCompressionInput,

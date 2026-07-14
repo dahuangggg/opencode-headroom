@@ -93,8 +93,9 @@ prefix.
 | Option | Default | Meaning |
 | --- | --- | --- |
 | `engine` | `"native"` | Compression engine; 0.2 supports only `native`. |
-| `thresholdTokens` | `2000` | Global estimated-token threshold. |
-| `thresholdChars` | `8000` | Global character threshold. Compression is considered when either threshold is reached. |
+| `profile` | `"coding"` | `coding` matches Headroom's low activation thresholds; `legacy` restores the earlier plugin defaults. |
+| `thresholdTokens` | profile default (`25` for `coding`) | Global estimated-token threshold. An explicit value overrides the profile. |
+| `thresholdChars` | profile default (`25` for `coding`) | Global character threshold. An explicit value overrides the profile; compression is considered when either threshold is reached. |
 | `ttlHours` | `24` | Global CCR retention time. |
 | `storage.kind` | `"auto"` | `auto`, `memory`, or `bun-sqlite`. |
 | `storage.path` | `.headroom/ccr.sqlite` | SQLite path relative to the OpenCode worktree. |
@@ -114,6 +115,9 @@ prefix.
 
 Invalid enums, empty selectors, non-positive limits, and incompatible preserve
 rules fail during plugin initialization.
+
+Use `"profile": "legacy"` to restore the earlier `2000` token / `8000`
+character activation thresholds without changing any tool policies.
 
 ## Deterministic tool policy
 

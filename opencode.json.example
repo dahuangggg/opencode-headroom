@@ -5,8 +5,7 @@
       "@dahuangggg/opencode-headroom",
       {
         "engine": "native",
-        "thresholdTokens": 2000,
-        "thresholdChars": 8000,
+        "profile": "coding",
         "ttlHours": 24,
         "storage": {
           "kind": "auto",

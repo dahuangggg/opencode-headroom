@@ -146,6 +146,11 @@ compression preserves file headers, hunk headers, additions, and deletions
 while folding unchanged context. The exact original string, not the routed
 view, is offered to CCR.
 
+The public `coding` profile is the default and uses Headroom's 25-token and
+25-character activation thresholds. `legacy` restores the plugin's earlier
+2000-token and 8000-character thresholds. Explicit threshold options override
+either profile, so existing tuned configurations retain their behavior.
+
 `conservative`, `balanced`, and `aggressive` map to private per-compressor
 budgets. The public policy does not expose row counts, scoring weights, stack
 limits, or text ratios. A proposed result is accepted only when type-specific

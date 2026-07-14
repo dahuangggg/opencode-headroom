@@ -34,7 +34,7 @@ import { shouldPreserveRawFileRead } from "./read-protection.js";
 import { createRetrieveTool } from "./tools/retrieve.js";
 import { createStatsTool } from "./tools/stats.js";
 
-export type { HeadroomPluginOptions } from "./config.js";
+export type { HeadroomPluginOptions, HeadroomProfile } from "./config.js";
 
 type CompressionSourceKind = "toolOutput" | "outputPath";
 
