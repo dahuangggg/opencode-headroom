@@ -127,6 +127,7 @@ export function gateCompressionCandidate(input: {
   original: string;
   candidate: string;
   kind: ContentKind;
+  checkStructure?: boolean;
   checkProtectedFacts?: boolean;
   originalTokens?: number;
 }): CandidateGateResult {
@@ -140,7 +141,10 @@ export function gateCompressionCandidate(input: {
       candidateTokens,
     };
   }
-  if (!hasValidStructure(input.candidate, input.kind)) {
+  if (
+    input.checkStructure !== false
+    && !hasValidStructure(input.candidate, input.kind)
+  ) {
     return {
       accepted: false,
       reason: "invalid_structure",

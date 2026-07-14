@@ -40,7 +40,7 @@ export interface CompressionDebugInfo {
   compressor?: CompressorDebugSummary;
   lossless?: {
     applied: boolean;
-    transform?: "runs" | "search_heading";
+    transform?: "runs" | "search_heading" | "json_table";
     originalChars: number;
     compactedChars: number;
   };

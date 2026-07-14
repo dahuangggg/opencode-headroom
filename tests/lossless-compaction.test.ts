@@ -2,8 +2,10 @@ import { describe, expect, it } from "vitest";
 
 import {
   collapseRuns,
+  compactJsonTable,
   compactLossless,
   expandRuns,
+  expandJsonTable,
   searchHeading,
   searchUnheading,
 } from "../src/engine/lossless.js";
@@ -89,5 +91,73 @@ describe("lossless compaction", () => {
       applied: true,
       transform: "search_heading",
     });
+  });
+
+  it("round-trips homogeneous JSON records through compact table form", () => {
+    const original = JSON.stringify(
+      Array.from({ length: 20 }, (_, index) => ({
+        id: index + 1,
+        status: "ok",
+        enabled: index % 2 === 0,
+        note: index === 5 ? null : "routine cache entry",
+      })),
+      null,
+      2,
+    );
+    const compacted = compactJsonTable(original);
+
+    expect(compacted).toMatch(/^\[20\]\["id","status","enabled","note"\]/);
+    expect(JSON.parse(expandJsonTable(compacted))).toEqual(JSON.parse(original));
+    expect(compacted.length).toBeLessThan(original.length * 0.7);
+    expect(compactLossless(original, "json")).toMatchObject({
+      changed: true,
+      output: compacted,
+      transform: "json_table",
+    });
+  });
+
+  it("uses lossless JSON table compaction before adaptive row dropping", () => {
+    const rows = Array.from({ length: 50 }, (_, index) => ({
+      id: index + 1,
+      status: "ok",
+      message: "routine cache entry completed successfully",
+    }));
+    rows[33] = {
+      id: 34,
+      status: "quarantined",
+      message: "credential signature expired during regional handoff",
+    };
+    const original = JSON.stringify(rows, null, 2);
+    const result = compressByContentType(
+      {
+        content: original,
+        hash: createContentHash(original),
+        query: "",
+      },
+      { losslessThenLossy: true },
+    );
+
+    expect(result.changed).toBe(true);
+    expect(result.output).toContain("credential signature expired");
+    expect(result.output).not.toContain("_rows_offloaded");
+    expect(JSON.parse(expandJsonTable(result.output))).toEqual(rows);
+    expect(result.debug?.lossless).toMatchObject({
+      applied: true,
+      transform: "json_table",
+    });
+  });
+
+  it("does not compact heterogeneous or nested JSON records as a table", () => {
+    const heterogeneous = JSON.stringify([
+      { id: 1, status: "ok" },
+      { id: 2, status: "ok", extra: "shape change" },
+    ]);
+    const nested = JSON.stringify([
+      { id: 1, metadata: { region: "west" } },
+      { id: 2, metadata: { region: "east" } },
+    ]);
+
+    expect(compactJsonTable(heterogeneous)).toBe(heterogeneous);
+    expect(compactJsonTable(nested)).toBe(nested);
   });
 });

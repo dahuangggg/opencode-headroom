@@ -1,6 +1,6 @@
 import type { ContentKind } from "../compressors/types.js";
 
-export type LosslessTransform = "runs" | "search_heading";
+export type LosslessTransform = "runs" | "search_heading" | "json_table";
 
 export type LosslessCompaction =
   | { changed: false; output: string }
@@ -10,6 +10,8 @@ const RUN_MARKER_RE = /^\.\.\. \(repeated (\d+) times\)$/;
 const MAX_RUN_EXPANSION = 250_000;
 const GREP_ROW_RE = /^(?<path>[^\n:]+):(?<line>\d+):(?<content>.*)$/;
 const HEADING_ROW_RE = /^(?<line>\d+):(?<content>.*)$/;
+const JSON_TABLE_HEADER_RE = /^\[(?<count>\d+)\](?<keys>\[[^\n]*\])$/;
+const JSON_TABLE_MIN_SAVINGS = 0.3;
 
 function splitKeepTrailing(text: string): {
   lines: string[];
@@ -141,6 +143,88 @@ export function searchUnheading(text: string): string {
   return joinLines(output, trailingNewline);
 }
 
+export function compactJsonTable(text: string): string {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(text);
+  } catch {
+    return text;
+  }
+  if (!Array.isArray(parsed) || parsed.length < 2) {
+    return text;
+  }
+
+  const first = parsed[0];
+  if (!isScalarRecord(first)) {
+    return text;
+  }
+  const keys = Object.keys(first);
+  if (keys.length < 2) {
+    return text;
+  }
+
+  const rows: string[] = [];
+  for (const value of parsed) {
+    if (
+      !isScalarRecord(value)
+      || Object.keys(value).length !== keys.length
+      || !keys.every((key, index) => Object.keys(value)[index] === key)
+    ) {
+      return text;
+    }
+    rows.push(keys.map((key) => JSON.stringify(value[key])).join(","));
+  }
+
+  return [`[${parsed.length}]${JSON.stringify(keys)}`, ...rows].join("\n");
+}
+
+export function expandJsonTable(text: string): string {
+  const lines = text.split("\n");
+  const header = JSON_TABLE_HEADER_RE.exec(lines[0] ?? "");
+  const expectedCount = Number(header?.groups?.count);
+  if (!header?.groups?.keys || !Number.isSafeInteger(expectedCount)) {
+    return text;
+  }
+
+  try {
+    const keys = JSON.parse(header.groups.keys) as unknown;
+    if (
+      !Array.isArray(keys)
+      || keys.length < 2
+      || !keys.every((key) => typeof key === "string")
+      || new Set(keys).size !== keys.length
+      || lines.length - 1 !== expectedCount
+    ) {
+      return text;
+    }
+    const records = lines.slice(1).map((line) => {
+      const values = JSON.parse(`[${line}]`) as unknown;
+      if (!Array.isArray(values) || values.length !== keys.length) {
+        throw new Error("invalid compact JSON table row");
+      }
+      return Object.fromEntries(keys.map((key, index) => [key, values[index]]));
+    });
+    return JSON.stringify(records);
+  } catch {
+    return text;
+  }
+}
+
+function isScalarRecord(value: unknown): value is Record<string, string | number | boolean | null> {
+  return Boolean(
+    value
+    && typeof value === "object"
+    && !Array.isArray(value)
+    && Object.values(value as Record<string, unknown>).every(
+      (field) =>
+        field === null
+        || typeof field === "string"
+        || typeof field === "number"
+        || typeof field === "boolean",
+    ),
+  );
+}
+
 export function compactLossless(
   content: string,
   kind: ContentKind,
@@ -150,6 +234,19 @@ export function compactLossless(
   }
 
   try {
+    if (kind === "json") {
+      const output = compactJsonTable(content);
+      const expanded = expandJsonTable(output);
+      const canonical = JSON.stringify(JSON.parse(content) as unknown);
+      const savings = content.length === 0 ? 0 : 1 - output.length / content.length;
+      if (
+        output !== content
+        && savings >= JSON_TABLE_MIN_SAVINGS
+        && expanded === canonical
+      ) {
+        return { changed: true, output, transform: "json_table" };
+      }
+    }
     if (kind === "search") {
       const output = searchHeading(content);
       if (output.length < content.length && searchUnheading(output) === content) {

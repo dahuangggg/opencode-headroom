@@ -109,6 +109,10 @@ function selectCompressionCandidate(input: {
       original: input.original,
       candidate,
       kind: input.kind,
+      checkStructure:
+        candidate === input.lossless.output && input.lossless.changed
+          ? false
+          : undefined,
       checkProtectedFacts:
         candidate === input.lossless.output && input.lossless.changed
           ? false
