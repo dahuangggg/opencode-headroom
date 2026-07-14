@@ -142,9 +142,14 @@ then classifies JSON, source code, git diffs, search results, logs, tables,
 HTML, or text. Explicit tagged mixed sections are routed independently while
 their framing remains intact. Code compression preserves imports,
 declarations, signatures, types, errors, and query-relevant symbols. Diff
-compression preserves file headers, hunk headers, additions, and deletions
-while folding unchanged context. The exact original string, not the routed
-view, is offered to CCR.
+compression parses files and hunks, preserves Git metadata and two context
+lines around changes, and leaves inputs below 50 lines unchanged. Above the
+private 20-file or 10-hunk ceilings, query matches and error/security priority
+signals rank ahead of routine change density; first and last hunks remain
+anchors. Candidates saving less than 20% of lines are rejected. The router
+hard-protects error and security changes while allowing ordinary omitted
+files/hunks to rely on CCR. The exact original string, not the routed view, is
+offered to CCR.
 
 The public `coding` profile is the default and uses Headroom's 25-token and
 25-character activation thresholds. It also enables the lossless-first stage:

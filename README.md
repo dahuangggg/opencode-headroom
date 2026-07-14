@@ -143,6 +143,15 @@ the adaptive filler budget. When debug output is enabled, the compressor summary
 records the selected `k`, diversity, unique-group count, bias, knee, and zlib
 adjustment without recording the analyzed content or query.
 
+Unified diffs use a parsed file-and-hunk model instead of line filtering. Inputs
+below 50 lines remain exact. Eligible hunks keep two context lines on either
+side of every change, plus pre-diff text, file metadata, rename/mode lines, and
+`No newline` markers. Diffs above 20 files retain query- and priority-matching
+files before change-dense routine files; files above 10 hunks keep the first,
+last, and highest-scoring middle hunks. The candidate is used only when it
+saves at least 20% of lines. Error and security changes remain hard-protected;
+ordinary omitted files and hunks remain exactly recoverable through CCR.
+
 ## Deterministic tool policy
 
 `toolPolicy.rules` is the user extension point for tool-specific behavior:
@@ -434,7 +443,9 @@ npm run test:package
 ```
 
 `bun.lock` is the canonical lockfile. `bench:quality` enforces the pinned
-Headroom effect-parity corpus. `bench:check` is deterministic and does not
+Headroom effect-parity corpus. A bounded diff is structurally valid when it
+retains diff/file/hunk framing and changed lines; fixture-specific protected
+facts, rather than every routine file, remain mandatory. `bench:check` is deterministic and does not
 rewrite the tracked cost report; `bench:report` is the explicit report writer.
 `bench:perf` reports calibrated token counting cold/hot paths separately and
 measures fixed-seed router, Store put/get, ordinary non-repetition compression,

@@ -49,20 +49,23 @@ function structuralFailure(fixture: ParityFixture, output: string): string | und
     }
   }
   if (fixture.kind === "diff") {
-    const required = fixture.content
-      .split("\n")
-      .filter(
-        (line) =>
-          line.startsWith("diff --git ") ||
-          line.startsWith("--- ") ||
-          line.startsWith("+++ ") ||
-          line.startsWith("@@ ") ||
-          (line.startsWith("+") && !line.startsWith("+++")) ||
-          (line.startsWith("-") && !line.startsWith("---")),
-      );
-    const missing = required.find((line) => !output.includes(line));
-    if (missing) {
-      return `diff lost required line ${JSON.stringify(missing)}`;
+    const lines = output.split("\n");
+    const hasFile = lines.some(
+      (line) =>
+        line.startsWith("diff --git ") ||
+        line.startsWith("diff --cc ") ||
+        line.startsWith("diff --combined "),
+    );
+    const hasOldFile = lines.some((line) => line.startsWith("--- "));
+    const hasNewFile = lines.some((line) => line.startsWith("+++ "));
+    const hasHunk = lines.some((line) => /^@@@?\s/.test(line));
+    const hasChange = lines.some(
+      (line) =>
+        (line.startsWith("+") && !line.startsWith("+++")) ||
+        (line.startsWith("-") && !line.startsWith("---")),
+    );
+    if (!hasFile || !hasOldFile || !hasNewFile || !hasHunk || !hasChange) {
+      return "compressed diff is not structurally valid";
     }
   }
   if (fixture.kind === "mixed") {

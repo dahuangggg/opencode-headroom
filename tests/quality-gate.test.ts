@@ -73,4 +73,47 @@ describe("parity quality comparison", () => {
       ]),
     );
   });
+
+  it("accepts a structurally valid bounded diff that omits routine files", async () => {
+    const oracle = await loadParityOracle();
+    const local = oracle.fixtures.map((baseline, index) => ({
+      id: baseline.id,
+      strategy: baseline.strategy,
+      changed: baseline.outputTokens < baseline.originalTokens,
+      output: PARITY_FIXTURES[index]?.content ?? "",
+      originalTokens: baseline.originalTokens,
+      outputTokens: baseline.outputTokens,
+      latencyMs: 1,
+    }));
+    const diffIndex = PARITY_FIXTURES.findIndex(
+      (fixture) => fixture.id === "diff-auth-change",
+    );
+    const diffFixture = PARITY_FIXTURES[diffIndex]!;
+    local[diffIndex] = {
+      ...local[diffIndex]!,
+      changed: true,
+      output: [
+        "diff --git a/src/auth.ts b/src/auth.ts",
+        "--- a/src/auth.ts",
+        "+++ b/src/auth.ts",
+        "@@ -87,7 +87,10 @@ export async function rotateCredential(tenantId: TenantId) {",
+        "+  throw new AuthRotationError(\"credential rotation failed\");",
+        "[70 files omitted]",
+      ].join("\n"),
+      outputTokens: Math.min(100, oracle.fixtures[diffIndex]!.outputTokens),
+    };
+
+    const report = compareParityResults(PARITY_FIXTURES, oracle, local);
+
+    expect(diffFixture.protectedFacts.every((fact) => local[diffIndex]!.output.includes(fact)))
+      .toBe(true);
+    expect(report.failures).not.toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          fixtureId: "diff-auth-change",
+          metric: "structure",
+        }),
+      ]),
+    );
+  });
 });
