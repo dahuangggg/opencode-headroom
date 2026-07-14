@@ -2,9 +2,9 @@
 
 ## Measurement Foundation
 
-- [ ] Pin annotated parity corpus and oracle schema.
-- [ ] Implement pinned Headroom oracle refresh adapter.
-- [ ] Add provenance and stale-snapshot validation.
+- [x] Pin annotated parity corpus and oracle schema.
+- [x] Implement pinned Headroom oracle refresh adapter.
+- [x] Add provenance and stale-snapshot validation.
 - [ ] Add deterministic protected-fact and structure checks.
 - [ ] Add blocking `bench:quality` command and tests.
 - [ ] Checkpoint 1: tests, typecheck, build, honest current-gap report.

@@ -48,6 +48,7 @@
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "bench:check": "bun benchmarks/check.ts",
+    "bench:oracle:refresh": "bun benchmarks/parity/refresh.ts",
     "bench:report": "bun benchmarks/headroom-cost-experiment.ts --report",
     "bench:perf": "bun benchmarks/performance.ts",
     "lint:package": "node scripts/package-lint.mjs",
