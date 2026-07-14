@@ -8,19 +8,40 @@ export interface SearchMatch {
 }
 
 const MATCH_RE = /^(?<file>.+?)(?<sep>[:\-])(?<line>\d+)\k<sep>(?<content>.*)$/;
+const HEADING_MATCH_RE = /^(?<line>\d+):(?<content>.*)$/;
 const SEVERITY_RE =
   /\b(error|fail|failed|fatal|critical|exception|warn|warning|todo|fixme|hack|secret|password|security)\b/i;
 
 export function parseSearchResults(content: string): SearchMatch[] {
   const results: SearchMatch[] = [];
-  for (const line of content.split(/\r?\n/)) {
+  const lines = content.split(/\r?\n/);
+  let heading: string | undefined;
+  for (let index = 0; index < lines.length; index += 1) {
+    const line = lines[index] ?? "";
     const match = MATCH_RE.exec(line);
     const file = match?.groups?.file;
     const lineNumber = match?.groups?.line;
     const matchContent = match?.groups?.content;
     if (!file || !lineNumber || matchContent === undefined) {
+      const headingMatch = heading ? HEADING_MATCH_RE.exec(line) : undefined;
+      const headingLine = headingMatch?.groups?.line;
+      const headingContent = headingMatch?.groups?.content;
+      if (heading && headingLine && headingContent !== undefined) {
+        results.push({
+          file: heading,
+          lineNumber: Number(headingLine),
+          content: headingContent,
+        });
+        continue;
+      }
+      if (line && HEADING_MATCH_RE.test(lines[index + 1] ?? "")) {
+        heading = line;
+        continue;
+      }
+      heading = undefined;
       continue;
     }
+    heading = undefined;
     results.push({
       file,
       lineNumber: Number(lineNumber),

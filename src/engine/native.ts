@@ -18,6 +18,10 @@ import type {
   ToolOutputCompressionResult,
 } from "./types.js";
 
+export interface NativeHeadroomEngineOptions {
+  losslessThenLossy?: boolean;
+}
+
 export function buildCompressionQuery(args: unknown, intent?: string): string {
   const scalarArgs =
     args && typeof args === "object"
@@ -49,6 +53,7 @@ export class NativeHeadroomCompatibleEngine implements CompressionEngine {
 
   constructor(
     private store: CCRStore,
+    private options: NativeHeadroomEngineOptions = {},
     private repetition = new SessionRepetitionStore(),
   ) {}
 
@@ -160,7 +165,7 @@ export class NativeHeadroomCompatibleEngine implements CompressionEngine {
       query: buildCompressionQuery(input.args, input.intent),
       profile,
       originalTokens: knownOriginalTokens,
-    });
+    }, this.options);
     const originalTokens =
       knownOriginalTokens ??
       compressed.tokenCounts?.original ??
@@ -208,7 +213,7 @@ export class NativeHeadroomCompatibleEngine implements CompressionEngine {
           query: buildCompressionQuery(input.args, input.intent),
           profile,
           originalTokens: knownOriginalTokens,
-        });
+        }, this.options);
         return {
           compressedContent: finalized.output,
           compressedTokens:

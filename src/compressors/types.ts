@@ -38,6 +38,12 @@ export interface CompressionDebugInfo {
     metadata: Record<string, unknown>;
   };
   compressor?: CompressorDebugSummary;
+  lossless?: {
+    applied: boolean;
+    transform?: "runs" | "search_heading";
+    originalChars: number;
+    compactedChars: number;
+  };
   ccr?: {
     hash?: string;
     stored: boolean;

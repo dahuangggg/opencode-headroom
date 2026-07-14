@@ -147,9 +147,15 @@ while folding unchanged context. The exact original string, not the routed
 view, is offered to CCR.
 
 The public `coding` profile is the default and uses Headroom's 25-token and
-25-character activation thresholds. `legacy` restores the plugin's earlier
-2000-token and 8000-character thresholds. Explicit threshold options override
-either profile, so existing tuned configurations retain their behavior.
+25-character activation thresholds. It also enables the lossless-first stage:
+repeated log/text rows use counted run folding and grep rows use ripgrep heading
+form. Both transforms have exact inverses and are accepted only after a runtime
+round-trip check. The type compressor then runs on the folded form; if its
+candidate fails or saves nothing, the reversible fold remains the floor. Final
+structure, protected-fact, and token gates compare against the original routed
+payload. `legacy` restores the plugin's earlier 2000-token and 8000-character
+thresholds and disables this stage. Explicit threshold options override either
+profile's activation values.
 
 `conservative`, `balanced`, and `aggressive` map to private per-compressor
 budgets. The public policy does not expose row counts, scoring weights, stack

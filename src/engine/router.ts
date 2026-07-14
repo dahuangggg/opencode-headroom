@@ -6,6 +6,10 @@ import { compressLog } from "../compressors/log.js";
 import { compressSearch } from "../compressors/search.js";
 import { compressTabular, parseTabular } from "../compressors/tabular.js";
 import { compressText } from "../compressors/text.js";
+import {
+  compactLossless,
+  type LosslessCompaction,
+} from "./lossless.js";
 import { gateCompressionCandidate } from "./pipeline.js";
 import type {
   CompressorInput,
@@ -66,6 +70,63 @@ interface ExplicitSection {
 interface ExplicitSections {
   sections: ExplicitSection[];
   tail: string;
+}
+
+export interface ContentCompressionOptions {
+  losslessThenLossy?: boolean;
+}
+
+interface AcceptedCompressionCandidate {
+  output: string;
+  originalTokens: number;
+  candidateTokens: number;
+}
+
+function selectCompressionCandidate(input: {
+  original: string;
+  lossy: CompressorResult;
+  lossless: LosslessCompaction;
+  kind: DetectionResult["kind"];
+  originalTokens?: number;
+}): {
+  accepted?: AcceptedCompressionCandidate;
+  rejectedReason?: string;
+} {
+  const candidates: string[] = [];
+  if (input.lossy.changed) {
+    candidates.push(input.lossy.output);
+  }
+  if (
+    input.lossless.changed &&
+    !candidates.includes(input.lossless.output)
+  ) {
+    candidates.push(input.lossless.output);
+  }
+
+  let rejectedReason: string | undefined;
+  for (const candidate of candidates) {
+    const gate = gateCompressionCandidate({
+      original: input.original,
+      candidate,
+      kind: input.kind,
+      checkProtectedFacts:
+        candidate === input.lossless.output && input.lossless.changed
+          ? false
+          : undefined,
+      originalTokens: input.originalTokens,
+    });
+    if (gate.accepted) {
+      return {
+        accepted: {
+          output: candidate,
+          originalTokens: gate.originalTokens,
+          candidateTokens: gate.candidateTokens,
+        },
+      };
+    }
+    rejectedReason = gate.reason;
+  }
+  return rejectedReason ? { rejectedReason } : {};
 }
 
 function routeContent(content: string): RoutedContent {
@@ -133,6 +194,7 @@ function routeExplicitSections(content: string): ExplicitSections | undefined {
 
 function compressExplicitSections(
   input: CompressorInput,
+  options: ContentCompressionOptions,
 ): CompressorResult | undefined {
   const routed = routeExplicitSections(input.content);
   if (!routed) {
@@ -147,7 +209,7 @@ function compressExplicitSections(
         ...input,
         content: section.payload,
         originalTokens: undefined,
-      });
+      }, options);
       changed ||= result.changed;
       debugSections.push({
         tag: section.tag,
@@ -337,43 +399,63 @@ export function detectContentType(content: string): DetectionResult {
   return detectPayloadType(routeContent(content).payload);
 }
 
-export function compressByContentType(input: CompressorInput): CompressorResult {
-  const mixed = compressExplicitSections(input);
+export function compressByContentType(
+  input: CompressorInput,
+  options: ContentCompressionOptions = {},
+): CompressorResult {
+  const mixed = compressExplicitSections(input, options);
   if (mixed) {
     return mixed;
   }
 
   const routed = routeContent(input.content);
   const detection = detectPayloadType(routed.payload);
+  const lossless = options.losslessThenLossy
+    ? compactLossless(routed.payload, detection.kind)
+    : { changed: false as const, output: routed.payload };
+  const compressorInput = {
+    ...input,
+    content: lossless.output,
+    originalTokens: lossless.changed ? undefined : input.originalTokens,
+  };
   const attachRouterDebug = (result: CompressorResult): CompressorResult => {
-    const gate = result.changed
-      ? gateCompressionCandidate({
-          original: routed.payload,
-          candidate: result.output,
-          kind: detection.kind,
-          originalTokens:
-            routed.payload === input.content ? input.originalTokens : undefined,
-        })
-      : undefined;
-    const accepted = !gate || gate.accepted;
+    const { accepted, rejectedReason } = selectCompressionCandidate({
+      original: routed.payload,
+      lossy: result,
+      lossless,
+      kind: detection.kind,
+      originalTokens:
+        routed.payload === input.content ? input.originalTokens : undefined,
+    });
     const reusableTokenCounts =
-      gate && gate.accepted && routed.payload === input.content
+      accepted && routed.payload === input.content
         ? {
-            original: gate.originalTokens,
-            compressed: gate.candidateTokens,
+            original: accepted.originalTokens,
+            compressed: accepted.candidateTokens,
           }
         : undefined;
     return {
       ...result,
-      changed: result.changed && accepted,
-      output:
-        result.changed && accepted ? routed.render(result.output) : input.content,
-      ...(!accepted && gate && !gate.accepted
-        ? { reason: `candidate_${gate.reason}` }
-        : {}),
+      changed: accepted !== undefined,
+      output: accepted ? routed.render(accepted.output) : input.content,
+      ...(accepted
+        ? { reason: undefined }
+        : rejectedReason
+          ? { reason: `candidate_${rejectedReason}` }
+          : {}),
       ...(reusableTokenCounts ? { tokenCounts: reusableTokenCounts } : {}),
       debug: {
         ...(result.debug ?? {}),
+        ...(options.losslessThenLossy
+          ? {
+              lossless: {
+                applied: lossless.changed,
+                ...(lossless.changed ? { transform: lossless.transform } : {}),
+                originalChars: routed.payload.length,
+                compactedChars: lossless.output.length,
+              },
+            }
+          : {}),
         router: {
           kind: detection.kind,
           confidence: detection.confidence,
@@ -384,28 +466,26 @@ export function compressByContentType(input: CompressorInput): CompressorResult 
   };
 
   if (detection.kind === "code") {
-    return attachRouterDebug(compressCode({ ...input, content: routed.payload }));
+    return attachRouterDebug(compressCode(compressorInput));
   }
 
   if (detection.kind === "diff") {
-    return attachRouterDebug(compressDiff({ ...input, content: routed.payload }));
+    return attachRouterDebug(compressDiff(compressorInput));
   }
   if (detection.kind === "json") {
-    return attachRouterDebug(compressJson({ ...input, content: routed.payload }));
+    return attachRouterDebug(compressJson(compressorInput));
   }
   if (detection.kind === "search") {
-    return attachRouterDebug(compressSearch({ ...input, content: routed.payload }));
+    return attachRouterDebug(compressSearch(compressorInput));
   }
   if (detection.kind === "log") {
-    return attachRouterDebug(compressLog({ ...input, content: routed.payload }));
+    return attachRouterDebug(compressLog(compressorInput));
   }
   if (detection.kind === "table") {
-    return attachRouterDebug(
-      compressTabular({ ...input, content: routed.payload }),
-    );
+    return attachRouterDebug(compressTabular(compressorInput));
   }
   if (detection.kind === "html") {
-    return attachRouterDebug(compressHtml({ ...input, content: routed.payload }));
+    return attachRouterDebug(compressHtml(compressorInput));
   }
-  return attachRouterDebug(compressText({ ...input, content: routed.payload }));
+  return attachRouterDebug(compressText(compressorInput));
 }

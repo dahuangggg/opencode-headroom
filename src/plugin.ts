@@ -217,7 +217,9 @@ export const HeadroomNativePlugin: Plugin = async (pluginInput, options = {}) =>
   const config = normalizeConfig(options as HeadroomPluginOptions);
   const basePath = pluginBasePath(pluginInput);
   const store = await createCCRStore(resolveStorageConfig(config.storage, basePath));
-  const engine = new NativeHeadroomCompatibleEngine(store);
+  const engine = new NativeHeadroomCompatibleEngine(store, {
+    losslessThenLossy: config.profile === "coding",
+  });
   const sessionIntents = new SessionIntentStore();
   const telemetry = new LocalTelemetryAggregator({
     requestedAdapter: store.diagnostics.requested,

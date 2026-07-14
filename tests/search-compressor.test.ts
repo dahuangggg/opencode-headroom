@@ -17,6 +17,18 @@ describe("search compressor", () => {
     ]);
   });
 
+  it("parses ripgrep heading-form rows", () => {
+    const parsed = parseSearchResults(
+      "src/a.ts\n10:match\n11:more context\nsrc/b.ts\n4:error",
+    );
+
+    expect(parsed).toEqual([
+      { file: "src/a.ts", lineNumber: 10, content: "match" },
+      { file: "src/a.ts", lineNumber: 11, content: "more context" },
+      { file: "src/b.ts", lineNumber: 4, content: "error" },
+    ]);
+  });
+
   it("keeps line numbers, priority matches, summaries, and retrieve marker", () => {
     const original = searchFixture();
     const hash = createContentHash(original);

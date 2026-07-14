@@ -156,6 +156,50 @@ describe("OpenCode plugin", () => {
     expect(output.metadata.headroom).toBeUndefined();
   });
 
+  it("enables lossless-then-lossy only for the coding profile", async () => {
+    const original = Array(40).fill("INFO waiting for worker").join("\n");
+    const coding = await HeadroomNativePlugin(pluginInput(), {
+      storage: { kind: "memory" },
+      debug: true,
+      debugSink: "metadata",
+    });
+    const legacy = await HeadroomNativePlugin(pluginInput(), {
+      profile: "legacy",
+      storage: { kind: "memory" },
+      thresholdChars: 25,
+      thresholdTokens: 25,
+    });
+    const codingOutput = { title: "Bash", output: original, metadata: {} };
+    const legacyOutput = { title: "Bash", output: original, metadata: {} };
+    const hookInput = {
+      tool: "Bash",
+      sessionID: "lossless-profile",
+      callID: "c1",
+      args: { command: "run-worker" },
+    };
+
+    await coding["tool.execute.after"]!(hookInput, codingOutput);
+    await legacy["tool.execute.after"]!(hookInput, legacyOutput);
+
+    expect(codingOutput.output).toContain("... (repeated 40 times)");
+    expect(codingOutput.metadata.headroom.debug.lossless).toMatchObject({
+      applied: true,
+      transform: "runs",
+    });
+    expect(legacyOutput.output).toBe(original);
+
+    const retrieved = await coding.tool!.headroom_retrieve.execute(
+      {
+        hash: codingOutput.metadata.headroom.hash,
+        mode: "full",
+      },
+      { sessionID: "lossless-profile" } as never,
+    );
+    expect(typeof retrieved === "string" ? retrieved : retrieved.output).toBe(
+      original,
+    );
+  });
+
   it("stores full OpenCode outputPath content when display output was truncated", async () => {
     const dir = mkdtempSync(join(tmpdir(), "opencode-headroom-output-"));
     const fullOutputPath = join(dir, "tool-output.txt");

@@ -13,9 +13,9 @@ from observed behavior.
 
 The current native engine also adds effect-parity coverage for code, diffs,
 tables, HTML, and explicit mixed output; calibrated token accounting; bounded
-session intent; exact shell-read protection; and cross-turn span folding. These
-deepen private compression behavior without adding a proxy or changing the
-public 0.2 configuration surface.
+session intent; exact shell-read protection; reversible lossless-first folds;
+and cross-turn span folding. These deepen compression behavior without adding
+a proxy.
 
 The implementation follows Headroom's routing, compression, and CCR concepts,
 but does not run the Headroom proxy or require Headroom's Python/Rust runtime.
@@ -53,19 +53,21 @@ After a tool finishes, the plugin:
 3. skips empty, small, already-marked, and oversized output;
 4. detects JSON, source code, search output, logs, diffs, tables, HTML,
    explicit mixed sections, or plain text;
-5. applies a type-specific compressor and accepts the candidate only when its
-   structure and protected facts survive and the calibrated counter reports
-   token savings;
-6. commits the exact original and the chosen retrieve defaults to CCR;
-7. keeps source and plain-text output from `cat`, `head`, `tail`, `sed -n`, and
+5. under the default `coding` profile, applies a reversible type-native fold
+   before the type-specific lossy compressor; it keeps the lossless fold as the
+   floor when lossy selection cannot improve it;
+6. accepts the candidate only when its structure and protected facts survive
+   and the calibrated counter reports token savings;
+7. commits the exact original and the chosen retrieve defaults to CCR;
+8. keeps source and plain-text output from `cat`, `head`, `tail`, `sed -n`, and
    equivalent wrapped shell reads byte-exact, while leaving structured data and
    regenerable lockfiles eligible for compression;
-8. folds exact or highly similar whole output only when a bounded same-session
+9. folds exact or highly similar whole output only when a bounded same-session
    match exists, while committing another exactly retrievable CCR record;
-9. before each model request, folds repeated contiguous spans only in later
+10. before each model request, folds repeated contiguous spans only in later
    completed tool outputs, leaving earlier message bytes stable and supporting
    constant line-number shifts;
-10. records local counters and latency without recording output, arguments, path
+11. records local counters and latency without recording output, arguments, path
    content, or query text.
 
 The plugin registers:
@@ -93,7 +95,7 @@ prefix.
 | Option | Default | Meaning |
 | --- | --- | --- |
 | `engine` | `"native"` | Compression engine; 0.2 supports only `native`. |
-| `profile` | `"coding"` | `coding` matches Headroom's low activation thresholds; `legacy` restores the earlier plugin defaults. |
+| `profile` | `"coding"` | `coding` matches Headroom's low activation thresholds and lossless-first pipeline; `legacy` restores the earlier plugin behavior. |
 | `thresholdTokens` | profile default (`25` for `coding`) | Global estimated-token threshold. An explicit value overrides the profile. |
 | `thresholdChars` | profile default (`25` for `coding`) | Global character threshold. An explicit value overrides the profile; compression is considered when either threshold is reached. |
 | `ttlHours` | `24` | Global CCR retention time. |
@@ -117,7 +119,16 @@ Invalid enums, empty selectors, non-positive limits, and incompatible preserve
 rules fail during plugin initialization.
 
 Use `"profile": "legacy"` to restore the earlier `2000` token / `8000`
-character activation thresholds without changing any tool policies.
+character activation thresholds and disable the lossless-first stage without
+changing any tool policies. Explicit thresholds still override either
+profile's activation values.
+
+The lossless-first stage follows Headroom's format-native approach. Consecutive
+identical log/text rows become a counted repeat marker, and grep rows use
+ripgrep heading form so repeated paths are printed once. Every transform is
+round-trip checked at runtime and adopted only when its inverse reproduces the
+exact input and the result is smaller. The lossy candidate is still validated
+against the original, not merely against the folded intermediate result.
 
 ## Deterministic tool policy
 
