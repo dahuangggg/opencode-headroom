@@ -77,6 +77,12 @@ export function extractProtectedFacts(
           (line.startsWith("-") && !line.startsWith("---")),
       );
   }
+  if (kind === "table") {
+    const lines = content.split(/\r?\n/).filter((line) => line.trim());
+    return lines.filter(
+      (line, index) => index < 2 || PROTECTED_LINE_RE.test(line),
+    );
+  }
   return content
     .split(/\r?\n/)
     .map((line) => line.trim())

@@ -24,7 +24,7 @@
 - [x] Add multi-stage candidate pipeline and protected-fact gate.
 - [x] Add code-aware compression.
 - [x] Add diff compression.
-- [ ] Add tabular compression.
+- [x] Add tabular compression.
 - [ ] Add HTML extraction/compression.
 - [ ] Route new strategies inside explicit mixed sections.
 - [ ] Checkpoint 3: every content type meets recall and parity thresholds.

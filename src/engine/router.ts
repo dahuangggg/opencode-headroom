@@ -3,6 +3,7 @@ import { compressDiff } from "../compressors/diff.js";
 import { compressJson } from "../compressors/json.js";
 import { compressLog } from "../compressors/log.js";
 import { compressSearch } from "../compressors/search.js";
+import { compressTabular, parseTabular } from "../compressors/tabular.js";
 import { compressText } from "../compressors/text.js";
 import { gateCompressionCandidate } from "./pipeline.js";
 import type {
@@ -258,6 +259,14 @@ function detectPayloadType(probe: string): DetectionResult {
   }
 
   const firstLines = probe.split(/\r?\n/).slice(0, 500);
+  const table = parseTabular(probe);
+  if (table) {
+    return {
+      kind: "table",
+      confidence: 0.95,
+      metadata: { format: table.delimiter, rows: table.rows.length },
+    };
+  }
   const diffHeaders = firstLines.filter((line) =>
     DIFF_HEADER_RE.test(line),
   ).length;
@@ -360,6 +369,11 @@ export function compressByContentType(input: CompressorInput): CompressorResult 
   }
   if (detection.kind === "log") {
     return attachRouterDebug(compressLog({ ...input, content: routed.payload }));
+  }
+  if (detection.kind === "table") {
+    return attachRouterDebug(
+      compressTabular({ ...input, content: routed.payload }),
+    );
   }
   return attachRouterDebug(compressText({ ...input, content: routed.payload }));
 }

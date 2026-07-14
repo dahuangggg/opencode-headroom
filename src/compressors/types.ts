@@ -4,7 +4,8 @@ export type ContentKind =
   | "log"
   | "text"
   | "code"
-  | "diff";
+  | "diff"
+  | "table";
 
 export interface DetectionResult {
   kind: ContentKind;
