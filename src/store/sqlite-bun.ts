@@ -432,7 +432,11 @@ export class BunSQLiteCCRStore implements CCRStore {
     }
   }
 
-  async get(hash: string, sessionID?: string): Promise<CCREntry | null> {
+  private findEntry(
+    hash: string,
+    sessionID: string | undefined,
+    countRetrieval: boolean,
+  ): CCREntry | null {
     this.db.exec("BEGIN IMMEDIATE");
     try {
       if (this.deleteExpiredEntries(this.now()) > 0) {
@@ -455,11 +459,16 @@ export class BunSQLiteCCRStore implements CCRStore {
         return null;
       }
 
-      this.db
-        .query("UPDATE ccr_entries SET retrieval_count = retrieval_count + 1 WHERE id = ?")
-        .run(row.id);
+      if (countRetrieval) {
+        this.db
+          .query("UPDATE ccr_entries SET retrieval_count = retrieval_count + 1 WHERE id = ?")
+          .run(row.id);
+      }
       this.db.exec("COMMIT");
-      return { ...rowToEntry(row), retrievalCount: row.retrieval_count + 1 };
+      return {
+        ...rowToEntry(row),
+        retrievalCount: row.retrieval_count + (countRetrieval ? 1 : 0),
+      };
     } catch (error) {
       try {
         this.db.exec("ROLLBACK");
@@ -468,6 +477,14 @@ export class BunSQLiteCCRStore implements CCRStore {
       }
       throw error;
     }
+  }
+
+  async peek(hash: string, sessionID?: string): Promise<CCREntry | null> {
+    return this.findEntry(hash, sessionID, false);
+  }
+
+  async get(hash: string, sessionID?: string): Promise<CCREntry | null> {
+    return this.findEntry(hash, sessionID, true);
   }
 
   async deleteSession(sessionID: string): Promise<number> {

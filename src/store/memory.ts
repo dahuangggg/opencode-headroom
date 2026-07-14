@@ -149,7 +149,11 @@ export class MemoryCCRStore implements CCRStore {
     return { ...entry };
   }
 
-  async get(hash: string, sessionID?: string): Promise<CCREntry | null> {
+  private findEntry(
+    hash: string,
+    sessionID: string | undefined,
+    countRetrieval: boolean,
+  ): CCREntry | null {
     const entries = this.entries.get(hash);
     if (!entries) {
       return null;
@@ -181,9 +185,17 @@ export class MemoryCCRStore implements CCRStore {
     if (!entry) {
       return null;
     }
-    entry.retrievalCount += 1;
+    if (countRetrieval) entry.retrievalCount += 1;
 
     return { ...entry };
+  }
+
+  async peek(hash: string, sessionID?: string): Promise<CCREntry | null> {
+    return this.findEntry(hash, sessionID, false);
+  }
+
+  async get(hash: string, sessionID?: string): Promise<CCREntry | null> {
+    return this.findEntry(hash, sessionID, true);
   }
 
   async deleteSession(sessionID: string): Promise<number> {

@@ -85,6 +85,7 @@ export interface CCRStats {
 export interface CCRStore {
   readonly diagnostics: CCRStoreDiagnostics;
   put(input: CCRPutInput): Promise<CCREntry>;
+  peek(hash: string, sessionID?: string): Promise<CCREntry | null>;
   get(hash: string, sessionID?: string): Promise<CCREntry | null>;
   deleteSession(sessionID: string): Promise<number>;
   close(): Promise<void>;
