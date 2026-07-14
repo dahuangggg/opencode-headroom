@@ -52,6 +52,7 @@ const COMPRESSION_TELEMETRY_REASONS = new Set<CompressionTelemetryReason>([
   "below_threshold",
   "legacy_skip_tool",
   "builtin_preserve",
+  "read_protected",
   "default_preserve",
   "user_preserve",
   "too_large",

@@ -96,5 +96,12 @@ describe("shell raw-file read protection", () => {
         action: "preserve",
       },
     });
+
+    const stats = await plugin.tool!.headroom_stats.execute(
+      { sessionOnly: true },
+      { sessionID: "read-session" } as never,
+    );
+    const rendered = typeof stats === "string" ? stats : stats.output;
+    expect(rendered).toContain("compression reasons: read_protected=1");
   });
 });
