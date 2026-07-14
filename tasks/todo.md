@@ -60,10 +60,10 @@
 
 ### Read Lifecycle Defaults
 
-- [ ] Preserve superseded Reads by default.
-- [ ] Skip lifecycle replacement below 512 bytes.
-- [ ] Preserve exact CCR recovery for stale live-zone Reads.
-- [ ] Checkpoint: targeted tests plus multi-turn integration.
+- [x] Preserve superseded Reads by default.
+- [x] Skip lifecycle replacement below 512 UTF-8 bytes.
+- [x] Preserve exact CCR recovery for stale live-zone Reads.
+- [x] Checkpoint: targeted tests plus multi-turn integration.
 
 ### Net Cost and Relevance
 

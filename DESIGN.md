@@ -253,7 +253,8 @@ disposal remove this state.
 request. It normalizes `filePath`, `file_path`, or `path` against the worktree
 and classifies an earlier Read as stale after a later write, or superseded only
 when a later Read fully covers its offset/limit range. Fresh and partially
-overlapping reads remain byte-exact.
+overlapping reads remain byte-exact. The default policy compresses stale Reads,
+preserves superseded Reads, and rejects payloads below 512 UTF-8 bytes.
 
 The scan is bounded to 10,000 relevant operations. If that limit is exceeded,
 the entire lifecycle pass fails open for the request; it never classifies or

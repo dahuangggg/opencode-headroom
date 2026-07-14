@@ -61,6 +61,22 @@ describe("Read lifecycle", () => {
           maxOperations: 0,
         }),
     ).toThrow(/maxOperations must be a positive safe integer/);
+    expect(
+      () =>
+        new ReadLifecycleManager(store, {
+          basePath: "/repo",
+          ttlMs: 60_000,
+          minSizeBytes: -1,
+        }),
+    ).toThrow(/minSizeBytes must be a non-negative safe integer/);
+    expect(
+      () =>
+        new ReadLifecycleManager(store, {
+          basePath: "/repo",
+          ttlMs: 60_000,
+          compressSuperseded: "yes" as never,
+        }),
+    ).toThrow(/compression flags must be boolean/);
   });
 
   it("replaces a Read made stale by a later edit and stores the exact original", async () => {
@@ -106,7 +122,7 @@ describe("Read lifecycle", () => {
     );
   });
 
-  it("replaces only an earlier Read fully covered by a later Read", async () => {
+  it("preserves an earlier Read fully covered by a later Read by default", async () => {
     const store = new MemoryCCRStore();
     const covered = completedTool({
       tool: "Read",
@@ -135,6 +151,45 @@ describe("Read lifecycle", () => {
     });
     const stats = await manager.apply(messages);
 
+    expect(outputOf(covered)).toBe(largeRead("covered range"));
+    expect(outputOf(covering)).toBe(largeRead("covering range"));
+    expect(stats).toMatchObject({
+      readsTotal: 2,
+      readsStale: 0,
+      readsSuperseded: 1,
+      replacementsApplied: 0,
+    });
+  });
+
+  it("can replace a fully covered Read when superseded compression is enabled", async () => {
+    const store = new MemoryCCRStore();
+    const covered = completedTool({
+      tool: "Read",
+      callID: "read-covered",
+      filePath: "src/ranges.ts",
+      offset: 20,
+      limit: 10,
+      output: largeRead("covered range"),
+    });
+    const covering = completedTool({
+      tool: "Read",
+      callID: "read-covering",
+      filePath: "src/ranges.ts",
+      offset: 10,
+      limit: 30,
+      output: largeRead("covering range"),
+    });
+    const messages = [
+      { info: {}, parts: [covered] },
+      { info: {}, parts: [covering] },
+    ];
+    const manager = new ReadLifecycleManager(store, {
+      basePath: "/repo",
+      ttlMs: 60_000,
+      compressSuperseded: true,
+    });
+    const stats = await manager.apply(messages);
+
     expect(outputOf(covered)).toContain("is superseded by a later Read");
     expect(outputOf(covering)).toBe(largeRead("covering range"));
     expect(stats).toMatchObject({
@@ -143,6 +198,70 @@ describe("Read lifecycle", () => {
       readsSuperseded: 1,
       replacementsApplied: 1,
     });
+  });
+
+  it("preserves stale Read payloads below the 512-byte floor", async () => {
+    const store = new MemoryCCRStore();
+    const original = "small stale line\n".repeat(20);
+    expect(Buffer.byteLength(original, "utf8")).toBeLessThan(512);
+    const read = completedTool({
+      tool: "Read",
+      callID: "small-read",
+      filePath: "src/small.ts",
+      output: original,
+    });
+    const edit = completedTool({
+      tool: "Edit",
+      callID: "small-edit",
+      filePath: "src/small.ts",
+      output: "Done",
+    });
+    const manager = new ReadLifecycleManager(store, {
+      basePath: "/repo",
+      ttlMs: 60_000,
+    });
+
+    const stats = await manager.apply([
+      { info: {}, parts: [read] },
+      { info: {}, parts: [edit] },
+    ]);
+
+    expect(outputOf(read)).toBe(original);
+    expect(stats).toMatchObject({
+      readsStale: 1,
+      replacementsApplied: 0,
+    });
+  });
+
+  it("uses UTF-8 bytes for the Read payload floor", async () => {
+    const store = new MemoryCCRStore();
+    const original = "界".repeat(200);
+    expect(original.length).toBeLessThan(512);
+    expect(Buffer.byteLength(original, "utf8")).toBeGreaterThanOrEqual(512);
+    const read = completedTool({
+      tool: "Read",
+      callID: "utf8-read",
+      filePath: "src/utf8.ts",
+      output: original,
+    });
+    const edit = completedTool({
+      tool: "Edit",
+      callID: "utf8-edit",
+      filePath: "src/utf8.ts",
+      output: "Done",
+    });
+    const manager = new ReadLifecycleManager(store, {
+      basePath: "/repo",
+      ttlMs: 60_000,
+    });
+
+    const stats = await manager.apply([
+      { info: {}, parts: [read] },
+      { info: {}, parts: [edit] },
+    ]);
+
+    expect(outputOf(read)).toContain("is stale after a later write");
+    expect(stats.replacementsApplied).toBe(1);
   });
 
   it("keeps overlapping partial Reads when the later range is not a superset", async () => {

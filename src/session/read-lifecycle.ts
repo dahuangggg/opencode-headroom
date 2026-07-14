@@ -14,6 +14,9 @@ export interface ReadLifecycleOptions {
   ttlMs: number;
   maxReplacements?: number;
   maxOperations?: number;
+  compressStale?: boolean;
+  compressSuperseded?: boolean;
+  minSizeBytes?: number;
 }
 
 export interface ReadLifecycleStats {
@@ -320,7 +323,28 @@ export class ReadLifecycleManager {
     if (!Number.isSafeInteger(maxOperations) || maxOperations <= 0) {
       throw new Error("Read lifecycle maxOperations must be a positive safe integer");
     }
-    this.options = { ...options, maxReplacements, maxOperations };
+    const compressStale = options.compressStale ?? true;
+    const compressSuperseded = options.compressSuperseded ?? false;
+    if (
+      typeof compressStale !== "boolean" ||
+      typeof compressSuperseded !== "boolean"
+    ) {
+      throw new Error("Read lifecycle compression flags must be boolean");
+    }
+    const minSizeBytes = options.minSizeBytes ?? 512;
+    if (!Number.isSafeInteger(minSizeBytes) || minSizeBytes < 0) {
+      throw new Error(
+        "Read lifecycle minSizeBytes must be a non-negative safe integer",
+      );
+    }
+    this.options = {
+      ...options,
+      maxReplacements,
+      maxOperations,
+      compressStale,
+      compressSuperseded,
+      minSizeBytes,
+    };
   }
 
   get replacementCount(): number {
@@ -476,6 +500,12 @@ export class ReadLifecycleManager {
       if (state === "fresh") continue;
       if (state === "stale") stats.readsStale += 1;
       else stats.readsSuperseded += 1;
+      if (
+        (state === "stale" && !this.options.compressStale) ||
+        (state === "superseded" && !this.options.compressSuperseded)
+      ) {
+        continue;
+      }
 
       const frozen = mutation
         ? !mutation.canMutateToolPart(operation.part.source)
@@ -486,7 +516,13 @@ export class ReadLifecycleManager {
       }
 
       const original = operation.part.state.output;
-      if (!original.trim() || containsCCRMarker(original)) continue;
+      if (
+        Buffer.byteLength(original, "utf8") < this.options.minSizeBytes ||
+        !original.trim() ||
+        containsCCRMarker(original)
+      ) {
+        continue;
+      }
       const candidate = lifecycleMarker(
         operation.displayPath,
         state,

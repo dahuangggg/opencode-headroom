@@ -77,7 +77,8 @@ After a tool finishes, the plugin:
    match exists, while committing another exactly retrievable CCR record;
 10. before each model request, freezes completed tool parts observed on an
    earlier transform and allows Read lifecycle to replace only a newly observed
-   live `Read` when the same live zone already proves it stale or superseded;
+   live `Read` of at least 512 UTF-8 bytes when the same live zone proves it
+   stale;
 11. folds repeated contiguous spans only in newly observed completed tool
    outputs, while frozen outputs remain available as references and constant
    line-number shifts are supported;
@@ -113,13 +114,14 @@ Read lifecycle management runs before span folding under the `coding` profile.
 It derives `Read`, `Edit`, and `Write` history from completed OpenCode tool
 parts. An old Read becomes stale after a later write to the same normalized
 path, or superseded when a later Read fully covers its original offset/limit.
-Fresh and partially overlapping Reads remain byte-exact. Previously observed
-completed parts and the entire prefix through the latest explicit cache-control
-marker are frozen. Every replacement uses a canonical CCR hash, and Store
-failures leave the original untouched. The pass scans at most 10,000 relevant
-operations per request; larger histories are left entirely unchanged instead
-of being classified from a partial scan. Set `readLifecycle` to `false` to
-disable Read replacement; cache-safe span folding remains enabled.
+By default only stale Reads of at least 512 UTF-8 bytes are replaceable;
+superseded, fresh, smaller, and partially overlapping Reads remain byte-exact.
+Previously observed completed parts and the entire prefix through the latest
+explicit cache-control marker are frozen. Every replacement uses a canonical
+CCR hash, and Store failures leave the original untouched. The pass scans at
+most 10,000 relevant operations per request; larger histories are left entirely
+unchanged instead of being classified from a partial scan. Set `readLifecycle`
+to `false` to disable Read replacement; cache-safe span folding remains enabled.
 
 ## Configuration
 
@@ -145,7 +147,7 @@ disable Read replacement; cache-safe span folding remains enabled.
 | `debugLevel` | `"summary"` | `summary` or `trace`. |
 | `debugSink` | `"metadata"` | `metadata`, `file`, or `both`. |
 | `debugPath` | `.headroom/debug.ndjson` | Worktree-relative debug file path. |
-| `readLifecycle` | profile default (`true` for `coding`) | Replace eligible live stale or fully superseded OpenCode Read results before model requests. |
+| `readLifecycle` | profile default (`true` for `coding`) | Replace eligible live stale OpenCode Read results of at least 512 UTF-8 bytes before model requests. |
 
 Invalid enums, empty selectors, non-positive limits, and incompatible preserve
 rules fail during plugin initialization.
