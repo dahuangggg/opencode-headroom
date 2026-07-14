@@ -1,4 +1,9 @@
 import { formatJsonSentinel } from "../markers.js";
+import {
+  computeOptimalK,
+  type AdaptiveSizingDecision,
+} from "../engine/adaptive-sizer.js";
+import { rankInformationItems } from "../engine/information-selector.js";
 import type { CompressorInput, CompressorResult } from "./types.js";
 
 const PRIORITY_RE =
@@ -39,6 +44,7 @@ interface ArraySummary {
   keptRows: number;
   requiredRows: number;
   droppedRows: number;
+  adaptive: AdaptiveSizingDecision & { bias: number; path: string };
   selections: Array<Record<string, unknown>>;
 }
 
@@ -66,12 +72,21 @@ function summarizeArray(
     }
   });
 
+  const serializedRows = rows.map(serializeForInformation);
+  const rankedFiller = rankInformationItems(serializedRows, required);
+  const maxItems = input.profile?.json.maxItems ?? 13;
+  const availableFillerSlots = Math.max(0, maxItems - required.size);
+  const adaptiveBias = input.profile?.adaptive?.bias ?? 1;
+  const adaptive = computeOptimalK(
+    rankedFiller.map((index) => normalizeForSizing(serializedRows[index] ?? "")),
+    {
+      bias: adaptiveBias,
+      minK: Math.min(3, availableFillerSlots, rankedFiller.length),
+      maxK: Math.min(availableFillerSlots, rankedFiller.length),
+    },
+  );
   const selected = new Set<number>(required);
-  for (
-    let index = 0;
-    index < rows.length && selected.size < (input.profile?.json.maxItems ?? 13);
-    index += 1
-  ) {
+  for (const index of rankedFiller.slice(0, adaptive.k)) {
     selected.add(index);
   }
 
@@ -86,12 +101,26 @@ function summarizeArray(
     keptRows: keptRows.length,
     requiredRows: required.size,
     droppedRows,
+    adaptive: {
+      ...adaptive,
+      bias: adaptiveBias,
+      path: path ?? "$",
+    },
     selections: keptIndexes.slice(0, 50).map((index) => ({
       ...(path ? { path } : {}),
       index,
       reason: required.has(index) ? "required" : "filler",
     })),
   };
+}
+
+function serializeForInformation(value: unknown): string {
+  const serialized = JSON.stringify(value);
+  return serialized === undefined ? String(value) : serialized;
+}
+
+function normalizeForSizing(value: string): string {
+  return value.replace(/\p{N}+/gu, "N");
 }
 
 function summarizeObject(
@@ -165,6 +194,7 @@ export function compressJson(input: CompressorInput): CompressorResult {
   let keptFields = 0;
   let requiredFields = 0;
   let droppedFields = 0;
+  const adaptive: Array<AdaptiveSizingDecision & { bias: number; path: string }> = [];
   const selections: Array<Record<string, unknown>> = [];
 
   if (Array.isArray(parsed)) {
@@ -183,6 +213,7 @@ export function compressJson(input: CompressorInput): CompressorResult {
     keptRows = summary.keptRows;
     requiredRows = summary.requiredRows;
     droppedRows = summary.droppedRows;
+    adaptive.push(summary.adaptive);
     selections.push(...summary.selections);
   } else if (parsed && typeof parsed === "object") {
     const object = parsed as Record<string, unknown>;
@@ -201,6 +232,7 @@ export function compressJson(input: CompressorInput): CompressorResult {
       keptRows += summary.keptRows;
       requiredRows += summary.requiredRows;
       droppedRows += summary.droppedRows;
+      adaptive.push(summary.adaptive);
       if (selections.length < 50) {
         selections.push(...summary.selections.slice(0, 50 - selections.length));
       }
@@ -245,6 +277,7 @@ export function compressJson(input: CompressorInput): CompressorResult {
             arrays: arrayCount,
             fields: keptFields,
             requiredFields,
+            adaptive,
           },
           dropped: { rows: 0, arrays: 0, fields: 0 },
           selections,
@@ -271,6 +304,7 @@ export function compressJson(input: CompressorInput): CompressorResult {
             arrays: arrayCount,
             fields: keptFields,
             requiredFields,
+            adaptive,
           },
           dropped: {
             rows: droppedRows,
@@ -298,6 +332,7 @@ export function compressJson(input: CompressorInput): CompressorResult {
           arrays: arrayCount,
           fields: keptFields,
           requiredFields,
+          adaptive,
         },
         dropped: {
           rows: droppedRows,

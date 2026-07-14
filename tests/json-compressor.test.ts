@@ -24,7 +24,7 @@ describe("JSON SmartCrusher-lite", () => {
     ).toBe(true);
     expect(parsed.some((row) => row.extra === "shape change")).toBe(true);
     expect(parsed.at(-1)).toEqual({
-      _ccr_dropped: `<<ccr:${hash} 67_rows_offloaded>>`,
+      _ccr_dropped: `<<ccr:${hash} ${result.debug?.compressor?.dropped.rows}_rows_offloaded>>`,
     });
     expect(result.output.length).toBeLessThan(original.length * 0.4);
   });
@@ -165,5 +165,77 @@ describe("JSON SmartCrusher-lite", () => {
       new RegExp(`^<<ccr:${hash} \\d+_fields_offloaded>>$`),
     );
     expect(Object.keys(parsed).length).toBeLessThan(Object.keys(originalValue).length);
+  });
+
+  it("uses a smaller adaptive filler budget for repetitive arrays", () => {
+    const build = (diverse: boolean) =>
+      JSON.stringify(
+        Array.from({ length: 40 }, (_, index) => ({
+          id: index + 1,
+          status: "ok",
+          message: diverse
+            ? `distinct component ${String.fromCharCode(97 + Math.floor(index / 26))}${String.fromCharCode(97 + index % 26)} changed behavior`
+            : "routine cache entry completed successfully",
+        })),
+        null,
+        2,
+      );
+    const compress = (content: string) =>
+      compressJson({
+        content,
+        hash: createContentHash(content),
+        query: "",
+      });
+    const repeated = compress(build(false));
+    const diverse = compress(build(true));
+    const repeatedAdaptive = repeated.debug?.compressor?.kept.adaptive as
+      | Array<{ k: number; uniqueGroups: number }>
+      | undefined;
+    const diverseAdaptive = diverse.debug?.compressor?.kept.adaptive as
+      | Array<{ k: number; uniqueGroups: number }>
+      | undefined;
+
+    expect(repeatedAdaptive?.[0]).toBeDefined();
+    expect(diverseAdaptive?.[0]).toBeDefined();
+    expect(repeatedAdaptive?.[0]?.k).toBeLessThan(diverseAdaptive?.[0]?.k ?? 0);
+  });
+
+  it("keeps a middle sample from a repetitive ordered array", () => {
+    const rows = Array.from({ length: 41 }, (_, index) => ({
+      id: index + 1,
+      status: "ok",
+      message: "routine cache entry completed successfully",
+    }));
+    const original = JSON.stringify(rows, null, 2);
+    const result = compressJson({
+      content: original,
+      hash: createContentHash(original),
+      query: "",
+    });
+    const parsed = JSON.parse(result.output) as Array<Record<string, unknown>>;
+
+    expect(parsed.some((row) => row.id === 21)).toBe(true);
+  });
+
+  it("keeps a semantically rare row without requiring severity keywords", () => {
+    const rows = Array.from({ length: 50 }, (_, index) => ({
+      id: index + 1,
+      status: "ok",
+      message: "routine cache entry completed successfully",
+    }));
+    rows[37] = {
+      id: 38,
+      status: "quarantined",
+      message: "credential signature expired during regional handoff",
+    };
+    const original = JSON.stringify(rows, null, 2);
+    const result = compressJson({
+      content: original,
+      hash: createContentHash(original),
+      query: "",
+    });
+    const parsed = JSON.parse(result.output) as Array<Record<string, unknown>>;
+
+    expect(parsed).toContainEqual(rows[37]);
   });
 });
