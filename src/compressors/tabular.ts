@@ -1,4 +1,6 @@
 import { formatRetrieveMarker } from "../markers.js";
+import { computeOptimalK } from "../engine/adaptive-sizer.js";
+import { rankInformationItems } from "../engine/information-selector.js";
 import type { CompressorInput, CompressorResult } from "./types.js";
 
 interface ParsedTable {
@@ -54,20 +56,33 @@ export function compressTabular(input: CompressorInput): CompressorResult {
   }
 
   const queryWords = words(input.query);
-  const selected = new Set<number>();
+  const required = new Set<number>();
   table.rows.forEach((row, index) => {
     const lower = row.toLowerCase();
     if (
       ABNORMAL_RE.test(row) ||
       queryWords.filter((word) => lower.includes(word)).length >= 1
     ) {
-      selected.add(index);
+      required.add(index);
     }
   });
   [0, 1, table.rows.length - 2, table.rows.length - 1].forEach((index) => {
-    if (index >= 0 && index < table.rows.length) selected.add(index);
+    if (index >= 0 && index < table.rows.length) required.add(index);
   });
-  for (let index = 0; index < table.rows.length && selected.size < 12; index += 1) {
+  const rankedFiller = rankInformationItems(table.rows, required);
+  const maxRows = input.profile?.json.maxItems ?? 12;
+  const availableFillerSlots = Math.max(0, maxRows - required.size);
+  const adaptiveBias = input.profile?.adaptive?.bias ?? 1;
+  const adaptive = computeOptimalK(
+    rankedFiller.map((index) => (table.rows[index] ?? "").replace(/\p{N}+/gu, "N")),
+    {
+      bias: adaptiveBias,
+      minK: Math.min(3, availableFillerSlots, rankedFiller.length),
+      maxK: Math.min(availableFillerSlots, rankedFiller.length),
+    },
+  );
+  const selected = new Set(required);
+  for (const index of rankedFiller.slice(0, adaptive.k)) {
     selected.add(index);
   }
 
@@ -107,7 +122,13 @@ export function compressTabular(input: CompressorInput): CompressorResult {
         strategy: "table",
         originalChars: input.content.length,
         compressedChars: output.length,
-        kept: { headerLines: table.header.length, rows: keptRows.length },
+        kept: {
+          headerLines: table.header.length,
+          rows: keptRows.length,
+          requiredRows: required.size,
+          fillerRows: Math.max(0, keptRows.length - required.size),
+          adaptive: { ...adaptive, bias: adaptiveBias },
+        },
         dropped: { rows: omitted },
       },
     },

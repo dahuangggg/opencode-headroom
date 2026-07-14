@@ -69,4 +69,57 @@ describe("tabular compressor", () => {
       compressTabular({ content: small, hash, query: "" }),
     ).toMatchObject({ changed: false, output: small });
   });
+
+  it("uses a smaller adaptive filler budget for repetitive tables", () => {
+    const build = (diverse: boolean) => [
+      "tenant,status,detail",
+      ...Array.from({ length: 60 }, (_, index) =>
+        diverse
+          ? `tenant-${index},ok,distinct component ${String.fromCharCode(97 + Math.floor(index / 26))}${String.fromCharCode(97 + index % 26)} changed behavior`
+          : `tenant-${index},ok,routine cache entry completed successfully`,
+      ),
+    ].join("\n");
+    const repeated = compressTabular({ content: build(false), hash, query: "" });
+    const diverse = compressTabular({ content: build(true), hash, query: "" });
+    const repeatedAdaptive = repeated.debug?.compressor?.kept.adaptive as
+      | { k: number; uniqueGroups: number }
+      | undefined;
+    const diverseAdaptive = diverse.debug?.compressor?.kept.adaptive as
+      | { k: number; uniqueGroups: number }
+      | undefined;
+
+    expect(repeatedAdaptive).toBeDefined();
+    expect(diverseAdaptive).toBeDefined();
+    expect(repeatedAdaptive?.k).toBeLessThan(diverseAdaptive?.k ?? 0);
+  });
+
+  it("keeps a middle sample from a repetitive ordered table", () => {
+    const original = [
+      "tenant,status,detail",
+      ...Array.from(
+        { length: 41 },
+        (_, index) =>
+          `tenant-${index},ok,routine cache entry completed successfully`,
+      ),
+    ].join("\n");
+    const result = compressTabular({ content: original, hash, query: "" });
+
+    expect(result.output).toContain(
+      "tenant-20,ok,routine cache entry completed successfully",
+    );
+  });
+
+  it("keeps a semantically rare row without severity or query keywords", () => {
+    const rows = Array.from(
+      { length: 50 },
+      (_, index) =>
+        `tenant-${index},ok,routine cache entry completed successfully`,
+    );
+    rows[37] =
+      "tenant-37,quarantined,credential signature expired during regional handoff";
+    const original = ["tenant,status,detail", ...rows].join("\n");
+    const result = compressTabular({ content: original, hash, query: "" });
+
+    expect(result.output).toContain(rows[37]);
+  });
 });
