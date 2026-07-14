@@ -128,6 +128,17 @@ function isSummaryLine(content: string): boolean {
   );
 }
 
+function queryWords(query: string): string[] {
+  return [
+    ...new Set(
+      query
+        .toLowerCase()
+        .split(/[^\p{L}\p{N}_-]+/u)
+        .filter((word) => word.length > 2),
+    ),
+  ];
+}
+
 function scoreLogLine(line: Omit<ClassifiedLogLine, "score">): number {
   const levelScore =
     line.level === "ERROR" || line.level === "FAIL"
@@ -350,6 +361,14 @@ export function compressLog(input: CompressorInput): CompressorResult {
   const classified = classifyLogLines(lines);
   const required = new Map<number, ClassifiedLogLine>();
   const filler = new Map<number, ClassifiedLogLine>();
+
+  const relevanceWords = queryWords(input.query);
+  for (const line of classified) {
+    const lower = line.content.toLowerCase();
+    if (relevanceWords.some((word) => lower.includes(word))) {
+      addLine(required, line);
+    }
+  }
 
   for (const line of selectWithFirstLast(
     classified.filter((line) => line.level === "ERROR"),

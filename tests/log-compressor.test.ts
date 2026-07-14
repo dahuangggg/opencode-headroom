@@ -39,6 +39,45 @@ describe("log compressor", () => {
     expect(result.output.length).toBeLessThan(original.length * 0.5);
   });
 
+  it("keeps query-matching lines with nearby context", () => {
+    const original = Array.from({ length: 100 }, (_, index) =>
+      index === 61
+        ? "INFO tenant-lilac credential rotation started"
+        : `INFO routine worker event ${index}`,
+    ).join("\n");
+    const result = compressLog({
+      content: original,
+      hash: createContentHash(original),
+      query: "tenant-lilac credential",
+      profile: compressionProfileForStrength("aggressive"),
+    });
+
+    expect(result.changed).toBe(true);
+    expect(result.output).toContain(
+      "INFO tenant-lilac credential rotation started",
+    );
+    expect(result.output).toContain("INFO routine worker event 60");
+    expect(result.output).toContain("INFO routine worker event 62");
+  });
+
+  it("keeps every query match when matches exceed the normal line budget", () => {
+    const original = Array.from({ length: 100 }, (_, index) =>
+      index < 70
+        ? `INFO tenant-lilac shard ${index} completed`
+        : `INFO routine worker event ${index}`,
+    ).join("\n");
+    const result = compressLog({
+      content: original,
+      hash: createContentHash(original),
+      query: "tenant-lilac",
+      profile: compressionProfileForStrength("aggressive"),
+    });
+
+    expect(result.changed).toBe(true);
+    expect(result.debug?.compressor?.kept.requiredLines).toBe(70);
+    expect(result.output.match(/tenant-lilac/g)).toHaveLength(70);
+  });
+
   it("leaves short logs unchanged", () => {
     const original = "INFO boot\nERROR short failure";
     const result = compressLog({

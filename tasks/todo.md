@@ -73,8 +73,8 @@
 
 ### Relevance and Context Protection
 
-- [ ] Add relevance split and error/recent-code/active-file protection.
-- [ ] Checkpoint: quality, CCR, and multi-turn comparison gates.
+- [x] Add relevance split and error/recent-code/active-file protection.
+- [x] Checkpoint: quality, CCR, and multi-turn comparison gates.
 
 ### Resilience and Final Audit
 

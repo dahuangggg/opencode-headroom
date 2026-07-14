@@ -204,9 +204,21 @@ or query text.
 ### Bounded session context and repetition
 
 The latest real user text is retained per session with fixed session and
-character limits. It is combined with scalar tool arguments only in memory to
-rank relevant content; raw intent, arguments, and queries never enter
-telemetry.
+character limits. It is combined with top-level scalar tool arguments only in
+memory to rank relevant content; the 2,000-character query reserves a separate
+300-character argument budget and shares that budget across scalars so a long
+command cannot hide a later active file path. Log query hits are required
+selection rows and seed bounded neighboring context. Raw intent, arguments, and
+queries never enter telemetry.
+
+The default `coding` plugin profile applies Headroom's newest-output safety
+rails before the native engine: direct tool output at or below 8,000 UTF-16
+code units with at least two distinct error indicators remains byte-exact, as
+does detected Python or TypeScript/JavaScript source (including malformed code
+being debugged). Oversized error logs continue through the log compressor,
+which preserves their error facts. The guard does not intercept file-backed
+output, legacy-profile behavior, unsupported languages, or direct engine use.
+It is stateless and records only bounded reason enums.
 
 After a normal CCR commit, `SessionRepetitionStore` retains only bounded content
 signatures and line fingerprints. A later exact or at-least-90%-similar result

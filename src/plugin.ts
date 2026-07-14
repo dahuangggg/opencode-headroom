@@ -15,6 +15,7 @@ import {
   type DebugDecision,
   type DebugTraceRecord,
 } from "./debug.js";
+import { decideContextProtection } from "./engine/context-protection.js";
 import { NativeHeadroomCompatibleEngine } from "./engine/native.js";
 import { containsCCRMarker } from "./markers.js";
 import { resolveToolPolicy, type ResolvedToolPolicy } from "./policy.js";
@@ -55,6 +56,8 @@ const COMPRESSION_TELEMETRY_REASONS = new Set<CompressionTelemetryReason>([
   "legacy_skip_tool",
   "builtin_preserve",
   "read_protected",
+  "protected_error_output",
+  "protected_recent_code",
   "default_preserve",
   "user_preserve",
   "too_large",
@@ -529,6 +532,25 @@ export const HeadroomNativePlugin: Plugin = async (pluginInput, options = {}) =>
               ...input,
               decision: "skipped",
               reason: "below_threshold",
+              originalOutput,
+              originalTokens,
+              source,
+              ...policyDebugContext,
+            }),
+          );
+          return;
+        }
+
+        const protection =
+          config.profile === "coding" && source.kind === "toolOutput"
+            ? decideContextProtection(originalOutput)
+            : { preserve: false as const };
+        if (protection.preserve) {
+          await complete(
+            createDebugRecord({
+              ...input,
+              decision: "skipped",
+              reason: protection.reason,
               originalOutput,
               originalTokens,
               source,

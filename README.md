@@ -61,28 +61,30 @@ After a tool finishes, the plugin:
    output;
 2. preserves protected tools or rejects untrusted output paths;
 3. skips empty, small, already-marked, and oversized output;
-4. detects JSON, source code, search output, logs, diffs, tables, HTML,
+4. under the default `coding` profile, keeps short strong-error output and the
+   just-completed Python/TS/JS working set byte-exact;
+5. detects JSON, source code, search output, logs, diffs, tables, HTML,
    explicit mixed sections, or plain text;
-5. under the default `coding` profile, applies a reversible type-native fold
+6. under the default `coding` profile, applies a reversible type-native fold
    before the type-specific lossy compressor; it keeps the lossless fold as the
    floor when lossy selection cannot improve it;
-6. accepts the candidate only when its structure and protected facts survive
+7. accepts the candidate only when its structure and protected facts survive
    and the calibrated counter reports token savings; Python and TS/JS code is
    additionally reparsed after its language-valid retrieval comment is added;
-7. commits the exact original and the chosen retrieve defaults to CCR;
-8. keeps source and plain-text output from `cat`, `head`, `tail`, `sed -n`, and
+8. commits the exact original and the chosen retrieve defaults to CCR;
+9. keeps source and plain-text output from `cat`, `head`, `tail`, `sed -n`, and
    equivalent wrapped shell reads byte-exact, while leaving structured data and
    regenerable lockfiles eligible for compression;
-9. folds exact or highly similar whole output only when a bounded same-session
+10. folds exact or highly similar whole output only when a bounded same-session
    match exists, while committing another exactly retrievable CCR record;
-10. before each model request, freezes completed tool parts observed on an
+11. before each model request, freezes completed tool parts observed on an
    earlier transform and allows Read lifecycle to replace only a newly observed
    live `Read` of at least 512 UTF-8 bytes when the same live zone proves it
    stale;
-11. folds repeated contiguous spans only in newly observed completed tool
+12. folds repeated contiguous spans only in newly observed completed tool
    outputs, while frozen outputs remain available as references and constant
    line-number shifts are supported;
-12. records local counters and latency without recording output, arguments, path
+13. records local counters and latency without recording output, arguments, path
    content, or query text.
 
 The plugin registers:
@@ -175,6 +177,10 @@ intermediate result.
 Search, log, JSON-array, and tabular compression use Headroom-style adaptive
 information sizing after priority selection. Repetitive filler reaches its
 information-saturation point sooner, while diverse filler retains more rows.
+The relevance query reserves 300 characters for top-level scalar tool
+arguments, so a long user prompt cannot hide the active path or search pattern.
+Log query matches are required rows and seed the same bounded neighboring
+context used for errors and warnings.
 JSON and table candidates are ranked by normalized information rarity and
 distributed position coverage; semantic and numeric outliers are protected.
 Strength-specific row budgets remain safety ceilings: required rows do not spend

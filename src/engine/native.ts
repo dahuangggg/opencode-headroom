@@ -22,19 +22,45 @@ export interface NativeHeadroomEngineOptions {
   losslessThenLossy?: boolean;
 }
 
+const MAX_COMPRESSION_QUERY_CHARS = 2_000;
+const MAX_COMPRESSION_ARG_CHARS = 300;
+
+function joinBoundedScalars(values: readonly string[], maxChars: number): string {
+  if (values.length === 0 || maxChars <= 0) {
+    return "";
+  }
+
+  let remaining = Math.max(0, maxChars - (values.length - 1));
+  const pieces = values.map((value, index) => {
+    const remainingValues = values.length - index;
+    const share = Math.floor(remaining / remainingValues);
+    const piece = value.slice(0, share);
+    remaining -= piece.length;
+    return piece;
+  });
+  return pieces.join(" ").slice(0, maxChars);
+}
+
 export function buildCompressionQuery(args: unknown, intent?: string): string {
   const scalarArgs =
     args && typeof args === "object"
-      ? Object.values(args as Record<string, unknown>)
-          .filter((value) =>
-            ["string", "number", "boolean"].includes(typeof value),
-          )
-          .join(" ")
+      ? joinBoundedScalars(
+          Object.values(args as Record<string, unknown>)
+            .filter((value) =>
+              ["string", "number", "boolean"].includes(typeof value),
+            )
+            .map(String)
+            .filter(Boolean),
+          MAX_COMPRESSION_ARG_CHARS,
+        )
       : "";
-  return [intent?.trim(), scalarArgs]
+  const separatorChars = scalarArgs ? 1 : 0;
+  const intentBudget =
+    MAX_COMPRESSION_QUERY_CHARS - scalarArgs.length - separatorChars;
+  const boundedIntent = intent?.trim().slice(0, intentBudget);
+  return [boundedIntent, scalarArgs]
     .filter((value): value is string => Boolean(value))
-    .join("\n")
-    .slice(0, 2_000);
+    .join("\n");
 }
 
 function repetitionSummary(hash: string, match: RepetitionMatch): string {

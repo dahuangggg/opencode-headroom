@@ -44,4 +44,45 @@ describe("compression relevance context", () => {
     expect(query).not.toContain("must-not-copy");
     expect(query.length).toBeLessThanOrEqual(2_000);
   });
+
+  it("reserves query space for top-level scalar arguments after a long intent", () => {
+    const query = buildCompressionQuery(
+      {
+        file: "src/security/auth.ts",
+        line: 417,
+        exact: true,
+        nested: { token: "must-not-copy" },
+      },
+      "investigate authentication failure ".repeat(200),
+    );
+
+    expect(query).toContain("src/security/auth.ts 417 true");
+    expect(query).not.toContain("must-not-copy");
+    expect(query.length).toBeLessThanOrEqual(2_000);
+  });
+
+  it("caps the scalar argument contribution at 300 characters", () => {
+    const query = buildCompressionQuery(
+      { query: "x".repeat(1_000) },
+      "i".repeat(3_000),
+    );
+    const [boundedIntent, boundedArgs] = query.split("\n");
+
+    expect(query).toHaveLength(2_000);
+    expect(boundedIntent).toHaveLength(1_699);
+    expect(boundedArgs).toHaveLength(300);
+  });
+
+  it("does not let one long scalar hide a later active file", () => {
+    const query = buildCompressionQuery(
+      {
+        command: `node ${"--trace-warnings ".repeat(100)}`,
+        filePath: "src/security/auth.ts",
+      },
+      "investigate the active authentication module",
+    );
+
+    expect(query).toContain("src/security/auth.ts");
+    expect(query.length).toBeLessThanOrEqual(2_000);
+  });
 });

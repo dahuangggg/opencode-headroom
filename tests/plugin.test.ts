@@ -29,6 +29,45 @@ function pluginInput() {
   } as never;
 }
 
+function pythonSourceFixture(): string {
+  return [
+    "from typing import Final",
+    "",
+    ...Array.from({ length: 16 }, (_, index) => [
+      `def routine_${index}(value: int) -> int:`,
+      '    """Compute a routine value."""',
+      `    stage_0 = value + ${index}`,
+      "    stage_1 = stage_0 + 1",
+      "    stage_2 = stage_1 + 2",
+      "    stage_3 = stage_2 + 3",
+      "    stage_4 = stage_3 + 4",
+      "    stage_5 = stage_4 + 5",
+      "    stage_6 = stage_5 + 6",
+      "    return stage_6",
+      "",
+    ]).flat(),
+    "VERSION: Final = 1",
+  ].join("\n");
+}
+
+function javascriptSourceFixture(typescript: boolean): string {
+  return Array.from({ length: 16 }, (_, index) => [
+    `export function routine_${index}(value${typescript ? ": number" : ""})${
+      typescript ? ": number" : ""
+    } {`,
+    `  const stage0 = value + ${index};`,
+    "  const stage1 = stage0 + 1;",
+    "  const stage2 = stage1 + 2;",
+    "  const stage3 = stage2 + 3;",
+    "  const stage4 = stage3 + 4;",
+    "  const stage5 = stage4 + 5;",
+    "  const stage6 = stage5 + 6;",
+    "  return stage6;",
+    "}",
+    "",
+  ]).flat().join("\n");
+}
+
 describe("native tools", () => {
   it("retrieve tool validates hash", async () => {
     const engine = new NativeHeadroomCompatibleEngine(new MemoryCCRStore());
@@ -132,6 +171,142 @@ describe("OpenCode plugin", () => {
 
     expect(output.output).toContain("[Retrieve more: hash=");
     expect(output.metadata.headroom.strategy).toBe("search");
+  });
+
+  it("preserves a short strong error output byte-for-byte with a bounded reason", async () => {
+    const plugin = await HeadroomNativePlugin(pluginInput(), {
+      storage: { kind: "memory" },
+      thresholdChars: 1,
+      thresholdTokens: 1,
+      debug: true,
+      debugSink: "metadata",
+    });
+    const original = logFixture();
+    const output = { title: "Bash", output: original, metadata: {} };
+
+    await plugin["tool.execute.after"]!(
+      {
+        tool: "Bash",
+        sessionID: "protected-error",
+        callID: "c1",
+        args: { command: "npm test" },
+      },
+      output,
+    );
+
+    expect(output.output).toBe(original);
+    expect(output.metadata.headroom.debug).toMatchObject({
+      decision: "skipped",
+      reason: "protected_error_output",
+    });
+
+    const stats = await plugin.tool!.headroom_stats.execute(
+      { sessionOnly: true },
+      { sessionID: "protected-error" } as never,
+    );
+    const statsOutput = typeof stats === "string" ? stats : stats.output;
+    expect(statsOutput).toContain("protected_error_output=1");
+  });
+
+  it("continues compressing error output above the 8000-character cap", async () => {
+    const plugin = await HeadroomNativePlugin(pluginInput(), {
+      storage: { kind: "memory" },
+      thresholdChars: 1,
+      thresholdTokens: 1,
+      debug: true,
+      debugSink: "metadata",
+    });
+    const original = `${logFixture()}\n${"INFO routine progress\n".repeat(500)}`;
+    const output = { title: "Bash", output: original, metadata: {} };
+
+    expect(original.length).toBeGreaterThan(8_000);
+    await plugin["tool.execute.after"]!(
+      {
+        tool: "Bash",
+        sessionID: "oversized-error",
+        callID: "c1",
+        args: { command: "npm test" },
+      },
+      output,
+    );
+
+    expect(output.output).not.toBe(original);
+    expect(output.metadata.headroom.debug.decision).toBe("compressed");
+  });
+
+  it("does not protect benign search output with only one error indicator", async () => {
+    const plugin = await HeadroomNativePlugin(pluginInput(), {
+      storage: { kind: "memory" },
+      thresholdChars: 1,
+      thresholdTokens: 1,
+    });
+    const original = Array.from(
+      { length: 120 },
+      (_, index) =>
+        `src/error_handler.py:${index + 1}: error_count = ${index + 1}`,
+    ).join("\n");
+    const output = { title: "Bash", output: original, metadata: {} };
+
+    await plugin["tool.execute.after"]!(
+      {
+        tool: "Bash",
+        sessionID: "benign-error-mention",
+        callID: "c1",
+        args: { command: "rg error_count" },
+      },
+      output,
+    );
+
+    expect(output.output).not.toBe(original);
+    expect(output.metadata.headroom.strategy).toBe("search");
+  });
+
+  it.each([
+    ["Python", pythonSourceFixture()],
+    ["TypeScript", javascriptSourceFixture(true)],
+    ["JavaScript", javascriptSourceFixture(false)],
+  ])("preserves just-completed valid %s source output byte-for-byte", async (_language, original) => {
+    const plugin = await HeadroomNativePlugin(pluginInput(), {
+      storage: { kind: "memory" },
+      thresholdChars: 1,
+      thresholdTokens: 1,
+      debug: true,
+      debugSink: "metadata",
+    });
+    const output = { title: "Bash", output: original, metadata: {} };
+
+    await plugin["tool.execute.after"]!(
+      {
+        tool: "Bash",
+        sessionID: `protected-${_language.toLowerCase()}`,
+        callID: "c1",
+        args: { command: "print generated source" },
+      },
+      output,
+    );
+
+    expect(output.output).toBe(original);
+    expect(output.metadata.headroom.debug).toMatchObject({
+      decision: "skipped",
+      reason: "protected_recent_code",
+    });
+  });
+
+  it("keeps direct native engine code compression available", async () => {
+    const original = pythonSourceFixture();
+    const engine = new NativeHeadroomCompatibleEngine(new MemoryCCRStore());
+
+    const result = await engine.compress({
+      tool: "Bash",
+      sessionID: "direct-code-engine",
+      callID: "c1",
+      args: { command: "print generated source" },
+      output: original,
+      ttlMs: 60_000,
+    });
+
+    expect(result.changed).toBe(true);
+    expect(result.strategy).toBe("code");
   });
 
   it("preserves the previous threshold behavior with the legacy profile", async () => {

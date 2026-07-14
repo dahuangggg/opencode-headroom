@@ -331,9 +331,22 @@ Acceptance:
 
 ### Phase 4: Add relevance split and context protection
 
-- Combine bounded session intent, scalar tool arguments, active file, errors,
-  and recent Python/TS/JS code when selecting content.
+- Reserve bounded query space for scalar tool arguments and the current active
+  path even when session intent is long.
+- Treat log query hits and their bounded neighboring context as required.
+- Preserve short strong-error output and just-completed Python/TS/JS code under
+  the default coding profile.
 - Preserve system/user content and the frozen prefix exactly.
+
+Acceptance:
+- A long scalar cannot hide a later active file path, and no nested argument is
+  copied into the relevance query.
+- Non-error log lines relevant to the current intent survive selection.
+- Error output at or below 8,000 characters and active Python/TS/JS code remain
+  byte-exact; oversized logs still compress and direct engine code compression
+  remains available.
+- Legacy, file-backed output, system/user content, and frozen history do not
+  change behavior.
 
 ### Phase 5: Add decision caches and circuit breaking
 
