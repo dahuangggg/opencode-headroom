@@ -1,3 +1,4 @@
+import { compressCode } from "../compressors/code.js";
 import { compressJson } from "../compressors/json.js";
 import { compressLog } from "../compressors/log.js";
 import { compressSearch } from "../compressors/search.js";
@@ -230,7 +231,7 @@ function detectCode(content: string): DetectionResult | undefined {
   }
 
   return {
-    kind: "text",
+    kind: "code",
     confidence: Math.min(1, 0.5 + patternMatches * 0.03),
     metadata: {
       code: true,
@@ -343,13 +344,8 @@ export function compressByContentType(input: CompressorInput): CompressorResult 
     };
   };
 
-  if (detection.metadata.code === true) {
-    return attachRouterDebug({
-      changed: false,
-      output: input.content,
-      strategy: "text",
-      reason: "code_passthrough",
-    });
+  if (detection.kind === "code") {
+    return attachRouterDebug(compressCode({ ...input, content: routed.payload }));
   }
 
   if (detection.kind === "diff") {

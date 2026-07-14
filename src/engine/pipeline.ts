@@ -49,6 +49,19 @@ export function extractProtectedFacts(
       return [];
     }
   }
+  if (kind === "code") {
+    return content
+      .split(/\r?\n/)
+      .map((line) => line.trim())
+      .filter(
+        (line) =>
+          line &&
+          (/^(?:import\b|from\s+\S+\s+import\b|export\b|(?:public|private|protected|static|abstract|async|pub\s+)*\s*(?:function|class|interface|type|enum|namespace|def|fn|struct|trait|func)\b)/.test(
+            line,
+          ) ||
+            PROTECTED_LINE_RE.test(line)),
+      );
+  }
   return content
     .split(/\r?\n/)
     .map((line) => line.trim())

@@ -87,7 +87,7 @@ describe("content router detection", () => {
     ).toBe("log");
   });
 
-  it("passes obvious source code through instead of text-compressing it", () => {
+  it("routes obvious source code through syntax-aware compression", () => {
     const source = Array.from(
       { length: 60 },
       (_, index) =>
@@ -105,9 +105,12 @@ describe("content router detection", () => {
       query: "",
     });
 
-    expect(result.changed).toBe(false);
-    expect(result.output).toBe(source);
-    expect(result.reason).toBe("code_passthrough");
+    expect(result.changed).toBe(true);
+    expect(result.strategy).toBe("code");
+    expect(result.output).toContain(
+      "export function value0(input: number): number {",
+    );
+    expect(result.output).not.toContain("const adjusted = input + 30;");
   });
 
   it("compresses explicit mixed sections and preserves their exact framing", () => {
@@ -195,7 +198,10 @@ describe("content router detection", () => {
     });
 
     expect(result.changed).toBe(true);
-    expect(result.output).toContain(`<stdout>\n${code}\n</stdout>`);
+    expect(result.output).toContain("<stdout>\n");
+    expect(result.output).toContain(
+      "export function value0(input: number): number {",
+    );
     expect(result.output).toContain(`<stderr>\n${diff}\n</stderr>`);
     expect(result.output.indexOf("<stdout>")).toBeLessThan(
       result.output.indexOf("<stderr>"),
@@ -207,8 +213,8 @@ describe("content router detection", () => {
       expect.arrayContaining([
         expect.objectContaining({
           tag: "stdout",
-          changed: false,
-          reason: "code_passthrough",
+          kind: "code",
+          changed: true,
         }),
         expect.objectContaining({
           tag: "stderr",

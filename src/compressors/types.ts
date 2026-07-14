@@ -1,4 +1,10 @@
-export type ContentKind = "json" | "search" | "log" | "text" | "diff";
+export type ContentKind =
+  | "json"
+  | "search"
+  | "log"
+  | "text"
+  | "code"
+  | "diff";
 
 export interface DetectionResult {
   kind: ContentKind;
