@@ -66,17 +66,7 @@ export function extractProtectedFacts(
   if (kind === "diff") {
     return content
       .split(/\r?\n/)
-      .filter(
-        (line) =>
-          line.startsWith("diff --git ") ||
-          line.startsWith("diff --cc ") ||
-          line.startsWith("diff --combined ") ||
-          line.startsWith("--- ") ||
-          line.startsWith("+++ ") ||
-          line.startsWith("@@ ") ||
-          (line.startsWith("+") && !line.startsWith("+++")) ||
-          (line.startsWith("-") && !line.startsWith("---")),
-      );
+      .filter((line) => PROTECTED_LINE_RE.test(line));
   }
   if (kind === "table") {
     const lines = content.split(/\r?\n/).filter((line) => line.trim());
@@ -112,6 +102,23 @@ export function extractProtectedFacts(
 }
 
 function hasValidStructure(candidate: string, kind: ContentKind): boolean {
+  if (kind === "diff") {
+    const lines = candidate.split(/\r?\n/);
+    return (
+      lines.some(
+        (line) =>
+          line.startsWith("diff --git ") ||
+          line.startsWith("diff --cc ") ||
+          line.startsWith("diff --combined "),
+      ) &&
+      lines.some((line) => /^@@@?\s/.test(line)) &&
+      lines.some(
+        (line) =>
+          (line.startsWith("+") && !line.startsWith("+++")) ||
+          (line.startsWith("-") && !line.startsWith("---")),
+      )
+    );
+  }
   if (kind !== "json") {
     return true;
   }
