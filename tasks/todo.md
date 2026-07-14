@@ -31,8 +31,8 @@
 
 ## Multi-turn and Delivery
 
-- [ ] Add bounded session-scoped repetition folding.
-- [ ] Preserve CCR exact recovery for repeated output.
+- [x] Add bounded session-scoped repetition folding.
+- [x] Preserve CCR exact recovery for repeated output.
 - [ ] Run full quality, performance, build, and package gates.
 - [ ] Verify clean tarball consumer installation.
 - [ ] Verify real OpenCode host loading from the installed tarball.

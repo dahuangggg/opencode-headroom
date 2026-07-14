@@ -313,11 +313,13 @@ export const HeadroomNativePlugin: Plugin = async (pluginInput, options = {}) =>
     event: async ({ event }) => {
       if (event.type === "session.deleted") {
         await store.deleteSession(event.properties.info.id);
+        engine.deleteSessionState(event.properties.info.id);
         telemetry.deleteSession(event.properties.info.id);
         sessionIntents.delete(event.properties.info.id);
       }
     },
     dispose: async () => {
+      engine.clearSessionState();
       sessionIntents.clear();
       await store.close();
     },

@@ -2,6 +2,10 @@ import { containsCCRMarker } from "../markers.js";
 import { compressionProfileForStrength } from "../compressors/profile.js";
 import { createContentHash } from "../store/ccr.js";
 import type { CCRStore } from "../store/types.js";
+import {
+  SessionRepetitionStore,
+  type RepetitionMatch,
+} from "../session/repetition.js";
 import { estimateTokens } from "../token.js";
 import { retrieveEntry } from "./retrieve.js";
 import { compressByContentType } from "./router.js";
@@ -29,10 +33,36 @@ export function buildCompressionQuery(args: unknown, intent?: string): string {
     .slice(0, 2_000);
 }
 
+function repetitionSummary(hash: string, match: RepetitionMatch): string {
+  const relationship =
+    match.kind === "exact"
+      ? "exact match to an earlier result"
+      : `${Math.round(match.similarity * 100)}% similar to an earlier result`;
+  return [
+    `[Repeated tool output: ${relationship} in this session]`,
+    `[Retrieve more: hash=${hash}]`,
+  ].join("\n");
+}
+
 export class NativeHeadroomCompatibleEngine implements CompressionEngine {
   name = "native";
 
-  constructor(private store: CCRStore) {}
+  constructor(
+    private store: CCRStore,
+    private repetition = new SessionRepetitionStore(),
+  ) {}
+
+  get repetitionSessionCount(): number {
+    return this.repetition.sessionCount;
+  }
+
+  deleteSessionState(sessionID: string): void {
+    this.repetition.delete(sessionID);
+  }
+
+  clearSessionState(): void {
+    this.repetition.clear();
+  }
 
   async compress(
     input: ToolOutputCompressionInput,
@@ -53,6 +83,50 @@ export class NativeHeadroomCompatibleEngine implements CompressionEngine {
     }
 
     const hash = createContentHash(input.output);
+    const repetition = this.repetition.match(input.sessionID, input.output);
+    if (repetition) {
+      const candidate = repetitionSummary(hash, repetition);
+      const candidateTokens = estimateTokens(candidate);
+      if (candidateTokens < originalTokens) {
+        const entry = await this.store.put({
+          sessionID: input.sessionID,
+          callID: input.callID,
+          tool: input.tool,
+          strategy: "repetition",
+          originalContent: input.output,
+          compressedContent: candidate,
+          originalTokens,
+          compressedTokens: candidateTokens,
+          ttlMs: input.ttlMs,
+          retrieveDefaults: input.retrieveDefaults,
+          contentForHash: (committedHash) => {
+            const output = repetitionSummary(committedHash, repetition);
+            return {
+              compressedContent: output,
+              compressedTokens: estimateTokens(output),
+            };
+          },
+        });
+        this.repetition.record(
+          input.sessionID,
+          entry.hash,
+          input.output,
+          entry.expiresAt,
+        );
+        return {
+          changed: true,
+          output: entry.compressedContent,
+          strategy: "repetition",
+          hash: entry.hash,
+          originalTokens,
+          compressedTokens: entry.compressedTokens,
+          debug: {
+            ccr: { hash: entry.hash, stored: true },
+          },
+        };
+      }
+    }
+
     const profile = compressionProfileForStrength(input.strength);
     const compressed = compressByContentType({
       content: input.output,
@@ -107,6 +181,12 @@ export class NativeHeadroomCompatibleEngine implements CompressionEngine {
         };
       },
     });
+    this.repetition.record(
+      input.sessionID,
+      entry.hash,
+      input.output,
+      entry.expiresAt,
+    );
 
     return {
       changed: true,

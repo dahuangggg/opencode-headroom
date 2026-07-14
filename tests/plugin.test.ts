@@ -531,6 +531,20 @@ describe("OpenCode plugin", () => {
     const content =
       typeof retrieved === "string" ? retrieved : retrieved.output;
     expect(content).toContain("not found or expired");
+
+    const afterDelete = { title: "Bash", output: searchFixture(), metadata: {} };
+    await plugin["tool.execute.after"]!(
+      {
+        tool: "Bash",
+        sessionID: "s1",
+        callID: "c2",
+        args: { command: "rg auth" },
+      },
+      afterDelete,
+    );
+    expect(afterDelete.metadata.headroom.strategy).toBe("search");
+
+    await plugin.dispose!();
   });
 
   it("reports local adapter, compression, retrieval cost, and session isolation with debug off", async () => {
