@@ -9,6 +9,7 @@ export interface ReadLifecycleOptions {
   basePath: string;
   ttlMs: number;
   maxReplacements?: number;
+  maxOperations?: number;
 }
 
 export interface ReadLifecycleStats {
@@ -18,6 +19,7 @@ export interface ReadLifecycleStats {
   replacementsApplied: number;
   frozenReadsSkipped: number;
   bytesSaved: number;
+  operationsOverflowed: boolean;
 }
 
 interface CompletedToolStateLike {
@@ -149,7 +151,9 @@ function lifecycleMarker(
   state: Exclude<ReadState, "fresh">,
   hash: string,
 ): string {
-  const displayPath = path.replace(/[\r\n\[\]]/g, "?").slice(0, 256);
+  const displayPath = path
+    .replace(/[\p{Cc}\p{Cf}\u2028\u2029\[\]]/gu, "?")
+    .slice(0, 256);
   const reason =
     state === "stale"
       ? "is stale after a later write"
@@ -160,12 +164,19 @@ function lifecycleMarker(
 function scanOperations(
   messages: readonly { parts: readonly unknown[] }[],
   basePath: string,
-): { operations: FileOperation[]; frozenThrough: number } {
+  maxOperations: number,
+): {
+  operations: FileOperation[];
+  frozenThrough: number;
+  overflowed: boolean;
+} {
   const operations: FileOperation[] = [];
   let frozenThrough = -1;
 
-  messages.forEach((message, messageIndex) => {
-    message.parts.forEach((part) => {
+  for (let messageIndex = 0; messageIndex < messages.length; messageIndex += 1) {
+    const message = messages[messageIndex];
+    if (!message) continue;
+    for (const part of message.parts) {
       const candidate = record(part);
       const state = record(candidate?.state);
       if (hasCacheControl(candidate?.metadata, state?.metadata)) {
@@ -173,7 +184,7 @@ function scanOperations(
       }
 
       const toolPart = completedToolPart(part);
-      if (!toolPart) return;
+      if (!toolPart) continue;
       const tool = toolPart.tool.toLowerCase();
       const kind = READ_TOOLS.has(tool)
         ? "read"
@@ -181,7 +192,7 @@ function scanOperations(
           ? "write"
           : undefined;
       const displayPath = filePathFromInput(toolPart.state.input);
-      if (!kind || !displayPath) return;
+      if (!kind || !displayPath) continue;
       operations.push({
         kind,
         messageIndex,
@@ -192,29 +203,50 @@ function scanOperations(
         ...(kind === "read" ? { range: readRange(toolPart.state.input) } : {}),
         part: toolPart,
       });
-    });
-  });
+      if (operations.length > maxOperations) {
+        return { operations: [], frozenThrough, overflowed: true };
+      }
+    }
+  }
 
-  return { operations, frozenThrough };
+  return { operations, frozenThrough, overflowed: false };
 }
 
-function classifyRead(
-  operation: FileOperation,
-  later: readonly FileOperation[],
-): ReadState {
-  const sameFile = later.filter((candidate) => candidate.pathKey === operation.pathKey);
-  if (sameFile.some((candidate) => candidate.kind === "write")) {
-    return "stale";
+function classifyReads(
+  operations: readonly FileOperation[],
+): Map<FileOperation, ReadState> {
+  const states = new Map<FileOperation, ReadState>();
+  const futureByPath = new Map<
+    string,
+    { hasWrite: boolean; readRanges: Array<ReadRange | undefined> }
+  >();
+
+  for (let index = operations.length - 1; index >= 0; index -= 1) {
+    const operation = operations[index];
+    if (!operation) continue;
+    const future = futureByPath.get(operation.pathKey) ?? {
+      hasWrite: false,
+      readRanges: [],
+    };
+    if (operation.kind === "write") {
+      future.hasWrite = true;
+    } else {
+      let state: ReadState = "fresh";
+      if (future.hasWrite) {
+        state = "stale";
+      } else if (
+        future.readRanges.some((range) =>
+          rangeCovers(range, operation.range),
+        )
+      ) {
+        state = "superseded";
+      }
+      states.set(operation, state);
+      future.readRanges.push(operation.range);
+    }
+    futureByPath.set(operation.pathKey, future);
   }
-  if (
-    sameFile.some(
-      (candidate) =>
-        candidate.kind === "read" && rangeCovers(candidate.range, operation.range),
-    )
-  ) {
-    return "superseded";
-  }
-  return "fresh";
+  return states;
 }
 
 export class ReadLifecycleManager {
@@ -235,7 +267,11 @@ export class ReadLifecycleManager {
     if (!Number.isSafeInteger(maxReplacements) || maxReplacements <= 0) {
       throw new Error("Read lifecycle maxReplacements must be a positive safe integer");
     }
-    this.options = { ...options, maxReplacements };
+    const maxOperations = options.maxOperations ?? 10_000;
+    if (!Number.isSafeInteger(maxOperations) || maxOperations <= 0) {
+      throw new Error("Read lifecycle maxOperations must be a positive safe integer");
+    }
+    this.options = { ...options, maxReplacements, maxOperations };
   }
 
   get replacementCount(): number {
@@ -273,10 +309,12 @@ export class ReadLifecycleManager {
     const contentDigest = createContentDigest(original);
     const cached = this.replacements.get(key);
     if (cached?.contentDigest === contentDigest) {
-      const active = await this.store.peek(cached.hash, operation.sessionID);
-      if (active && createContentDigest(active.originalContent) === contentDigest) {
-        this.remember(key, cached);
-        return lifecycleMarker(operation.displayPath, state, cached.hash);
+      if (this.store.peek) {
+        const active = await this.store.peek(cached.hash, operation.sessionID);
+        if (active && createContentDigest(active.originalContent) === contentDigest) {
+          this.remember(key, cached);
+          return lifecycleMarker(operation.displayPath, state, cached.hash);
+        }
       }
       this.replacements.delete(key);
     }
@@ -321,17 +359,24 @@ export class ReadLifecycleManager {
       replacementsApplied: 0,
       frozenReadsSkipped: 0,
       bytesSaved: 0,
+      operationsOverflowed: false,
     };
-    const { operations, frozenThrough } = scanOperations(
+    const { operations, frozenThrough, overflowed } = scanOperations(
       messages,
       this.options.basePath,
+      this.options.maxOperations,
     );
+    if (overflowed) {
+      stats.operationsOverflowed = true;
+      return stats;
+    }
+    const states = classifyReads(operations);
 
     for (let index = 0; index < operations.length; index += 1) {
       const operation = operations[index];
       if (!operation || operation.kind !== "read") continue;
       stats.readsTotal += 1;
-      const state = classifyRead(operation, operations.slice(index + 1));
+      const state = states.get(operation) ?? "fresh";
       if (state === "fresh") continue;
       if (state === "stale") stats.readsStale += 1;
       else stats.readsSuperseded += 1;

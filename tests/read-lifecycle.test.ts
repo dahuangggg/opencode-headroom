@@ -45,6 +45,19 @@ function outputOf(part: ReturnType<typeof completedTool>): string {
 }
 
 describe("Read lifecycle", () => {
+  it("rejects invalid lifecycle bounds at initialization", () => {
+    const store = new MemoryCCRStore();
+
+    expect(
+      () =>
+        new ReadLifecycleManager(store, {
+          basePath: "/repo",
+          ttlMs: 60_000,
+          maxOperations: 0,
+        }),
+    ).toThrow(/maxOperations must be a positive safe integer/);
+  });
+
   it("replaces a Read made stale by a later edit and stores the exact original", async () => {
     const store = new MemoryCCRStore();
     const original = largeRead("before edit");
@@ -265,5 +278,65 @@ describe("Read lifecycle", () => {
 
     expect(outputOf(read)).toBe(original);
     expect(stats.replacementsApplied).toBe(0);
+  });
+
+  it("removes invisible control characters from marker paths", async () => {
+    const store = new MemoryCCRStore();
+    const manager = new ReadLifecycleManager(store, {
+      basePath: "/repo",
+      ttlMs: 60_000,
+    });
+    const hostilePath = "src/\u001b[31mhidden\u202E.ts";
+    const read = completedTool({
+      tool: "Read",
+      callID: "hostile-read",
+      filePath: hostilePath,
+      output: largeRead("hostile path source"),
+    });
+    const edit = completedTool({
+      tool: "Edit",
+      callID: "hostile-edit",
+      filePath: hostilePath,
+      output: "Done",
+    });
+
+    await manager.apply([
+      { info: {}, parts: [read] },
+      { info: {}, parts: [edit] },
+    ]);
+
+    expect(outputOf(read)).toContain("Retrieve original: hash=");
+    expect(outputOf(read)).not.toMatch(/[\p{Cc}\p{Cf}\u2028\u2029]/u);
+  });
+
+  it("fails open when the bounded operation scan overflows", async () => {
+    const store = new MemoryCCRStore();
+    const manager = new ReadLifecycleManager(store, {
+      basePath: "/repo",
+      ttlMs: 60_000,
+      maxOperations: 1,
+    });
+    const original = largeRead("overflow source");
+    const read = completedTool({
+      tool: "Read",
+      callID: "overflow-read",
+      filePath: "src/overflow.ts",
+      output: original,
+    });
+    const edit = completedTool({
+      tool: "Edit",
+      callID: "overflow-edit",
+      filePath: "src/overflow.ts",
+      output: "Done",
+    });
+
+    const stats = await manager.apply([
+      { info: {}, parts: [read] },
+      { info: {}, parts: [edit] },
+    ]);
+
+    expect(outputOf(read)).toBe(original);
+    expect(stats.operationsOverflowed).toBe(true);
+    expect((await store.stats()).entryCount).toBe(0);
   });
 });
