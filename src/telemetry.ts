@@ -38,6 +38,7 @@ export type CompressionTelemetryReason =
   | "no_savings"
   | "mixed_no_savings"
   | "mixed_passthrough"
+  | "strategy_circuit_open"
   | "candidate_empty_candidate"
   | "candidate_invalid_structure"
   | "candidate_protected_fact_lost"
@@ -138,6 +139,11 @@ const COMPRESSION_REASONS = [
   "no_savings",
   "mixed_no_savings",
   "mixed_passthrough",
+  "strategy_circuit_open",
+  "candidate_empty_candidate",
+  "candidate_invalid_structure",
+  "candidate_protected_fact_lost",
+  "candidate_no_token_savings",
   "source_denied",
   "hook_error",
   "engine_error",

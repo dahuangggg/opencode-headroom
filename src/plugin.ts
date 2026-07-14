@@ -73,6 +73,7 @@ const COMPRESSION_TELEMETRY_REASONS = new Set<CompressionTelemetryReason>([
   "no_savings",
   "mixed_no_savings",
   "mixed_passthrough",
+  "strategy_circuit_open",
   "candidate_empty_candidate",
   "candidate_invalid_structure",
   "candidate_protected_fact_lost",

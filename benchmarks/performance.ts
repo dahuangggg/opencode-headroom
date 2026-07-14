@@ -35,6 +35,7 @@ type Operation =
   | "store.put"
   | "store.get"
   | "engine.compress"
+  | "engine.compress(cache-hit)"
   | "engine.retrieve(query)"
   | "plugin.tool.execute.after"
   | "plugin.messages.transform"
@@ -318,6 +319,36 @@ async function benchmarkStoreAndEngine(
       throw new Error(`${backend}/${payload.label} benchmark retained no engine session`);
     }
 
+    const cacheHitContent = `${payload.content}\nbench/cache-hit.ts:300000:INFO stable decision-cache sample`;
+    const primed = await engine.compress({
+      tool: "Bash",
+      sessionID: `${sessionID}-cache-prime`,
+      callID: "cache-prime",
+      args: { command: "rg target", query: QUERY },
+      output: cacheHitContent,
+      ttlMs: TTL_MS,
+    });
+    if (!primed.changed || !primed.hash) {
+      throw new Error(
+        `${backend}/${payload.label} did not prime the compression decision cache`,
+      );
+    }
+    const cacheHitCompress = await measure(async (iteration) => {
+      const result = await engine.compress({
+        tool: "Bash",
+        sessionID: `${sessionID}-cache-hit-${iteration}`,
+        callID: `cache-hit-${iteration}`,
+        args: { command: "rg target", query: QUERY },
+        output: cacheHitContent,
+        ttlMs: TTL_MS,
+      });
+      if (!result.changed || !result.hash) {
+        throw new Error(
+          `${backend}/${payload.label} decision-cache sample did not produce a CCR entry`,
+        );
+      }
+    });
+
     const partialRetrieve = await measure(async () => {
       const value = await engine.retrieve(
         engineHash!,
@@ -339,6 +370,12 @@ async function benchmarkStoreAndEngine(
       { backend, payload, operation: "store.put", distribution: storePut },
       { backend, payload, operation: "store.get", distribution: storeGet },
       { backend, payload, operation: "engine.compress", distribution: compress },
+      {
+        backend,
+        payload,
+        operation: "engine.compress(cache-hit)",
+        distribution: cacheHitCompress,
+      },
       {
         backend,
         payload,
@@ -650,6 +687,18 @@ export function assertTokenizerPerformanceReported(
   }
 }
 
+export function assertDecisionCachePerformanceReported(
+  results: PerformanceResultRow[],
+): void {
+  if (
+    !results.some(
+      (result) => result.operation === "engine.compress(cache-hit)",
+    )
+  ) {
+    throw new Error("missing hot decision-cache compression result");
+  }
+}
+
 function milliseconds(value: number): string {
   return value.toFixed(3);
 }
@@ -693,6 +742,7 @@ async function main(): Promise<void> {
   const p0 = assertP0HookLatency(results);
   const messageP0 = assertP0MessageTransformLatency(results);
   assertTokenizerPerformanceReported(results);
+  assertDecisionCachePerformanceReported(results);
   console.log(
     `P0 gate passed: memory 10KiB plugin.tool.execute.after p95=${milliseconds(p0.distribution.p95)}ms < ${P0_HOOK_MAX_P95_MS}ms`,
   );

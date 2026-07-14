@@ -350,10 +350,36 @@ Acceptance:
 
 ### Phase 5: Add decision caches and circuit breaking
 
-- Cache bounded compression and skip decisions without retaining unbounded raw
-  content.
-- Fail open and temporarily bypass a strategy after repeated local failures.
-- Finish with all quality, CCR, performance, build, and package gates.
+- Cache deterministic compression and stable skip decisions after same-session
+  repetition matching. Partition by full content/query digests, normalized
+  profile, lossless mode, and trusted known-token input.
+- Keep both tiers in one 30-minute, 512-entry LRU with 2,000,000 total and
+  250,000 single-result character bounds. Negative entries must retain no raw
+  output, arguments, intent, or query.
+- Recommit the current exact original to CCR on every positive hit and rerender
+  marker-bearing output when the Store allocates a different collision hash.
+- Fail open after three consecutive failures in one strategy, bypass only that
+  strategy byte-exact for 60 seconds, and never negative-cache an open circuit.
+- Report a distinct hot-cache performance row and finish with all quality, CCR,
+  performance, build, package, dependency-audit, and real-host gates.
+
+Acceptance:
+- Cross-session positive reuse runs no compressor when the canonical hash is
+  unchanged, but both sessions retrieve their exact original.
+- Stable negative reuse retains metadata only; session repetition still wins;
+  query/profile/token changes cannot alias.
+- Forced Store collisions rerender once and every emitted marker retrieves the
+  correct current-session original.
+- Strategy failures are isolated, success resets the counter, cooldown permits
+  a new trial, and every bypass returns the exact input.
+- Session deletion clears session-owned state without flushing reusable
+  decisions; disposal clears cache and breaker state.
+
+Verify:
+- `bun test tests/resilience.test.ts tests/router.test.ts tests/native-engine.test.ts`
+- `bun run bench:perf`
+- all release commands in the effect-parity spec plus a fresh installed-tarball
+  OpenCode host smoke.
 
 ## Extension Risks and Mitigations
 

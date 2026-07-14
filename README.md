@@ -15,7 +15,9 @@ The current native engine also adds effect-parity coverage for code, diffs,
 tables, HTML, and explicit mixed output; calibrated token accounting; bounded
 session intent; exact shell-read protection; reversible lossless-first folds;
 stale/superseded Read lifecycle management; and cross-turn span folding. These
-deepen compression behavior without adding a proxy.
+deepen compression behavior without adding a proxy. Bounded process-local
+decision reuse and per-strategy fail-open circuit breaking keep repeated work
+cheap and isolate a failing compressor.
 
 The implementation follows Headroom's routing, compression, and CCR concepts,
 but does not run the Headroom proxy or require Headroom's Python/Rust runtime.
@@ -77,14 +79,20 @@ After a tool finishes, the plugin:
    regenerable lockfiles eligible for compression;
 10. folds exact or highly similar whole output only when a bounded same-session
    match exists, while committing another exactly retrievable CCR record;
-11. before each model request, freezes completed tool parts observed on an
+11. after repetition matching, reuses only an identical content/query/profile
+   compression or stable skip decision; a positive hit still commits the exact
+   current original to session-scoped CCR;
+12. after three consecutive failures in one detected strategy, bypasses only
+   that strategy byte-exact for a 60-second cooldown; successful execution
+   resets its failure count;
+13. before each model request, freezes completed tool parts observed on an
    earlier transform and allows Read lifecycle to replace only a newly observed
    live `Read` of at least 512 UTF-8 bytes when the same live zone proves it
    stale;
-12. folds repeated contiguous spans only in newly observed completed tool
+14. folds repeated contiguous spans only in newly observed completed tool
    outputs, while frozen outputs remain available as references and constant
    line-number shifts are supported;
-13. records local counters and latency without recording output, arguments, path
+15. records local counters and latency without recording output, arguments, path
    content, or query text.
 
 The plugin registers:
@@ -129,6 +137,34 @@ CCR hash, and Store failures leave the original untouched. The pass scans at
 most 10,000 relevant operations per request; larger histories are left entirely
 unchanged instead of being classified from a partial scan. Set `readLifecycle`
 to `false` to disable Read replacement; cache-safe span folding remains enabled.
+
+### Decision reuse and failure isolation
+
+Whole-output repetition remains the first fast path. After that, a process-local
+two-layer decision cache can reuse a deterministic compression result or a
+stable skip decision only when the full content digest, relevance-query digest,
+strength/profile, lossless mode, and trusted original-token input all match.
+The key contains digests rather than raw source or query text. A positive hit
+does not reuse another session's CCR record: it commits the current exact
+original again, and a Store collision causes the marker-bearing candidate to be
+rendered for the newly allocated hash before anything is emitted. Open-circuit
+and exceptional outcomes never enter either decision-cache tier.
+
+The cache has a 30-minute absolute TTL and one global LRU bounded to 512 entries,
+2,000,000 retained compressed UTF-16 code units, and 250,000 code units for one
+result. Skip entries retain only strategy, a bounded reason, and token-count
+metadata; they retain no output. Session deletion clears same-session
+repetition state but deliberately leaves reusable process decisions until TTL,
+eviction, or plugin disposal. Compressed results can still contain sensitive
+snippets, so process memory must be treated as sensitive just like CCR.
+
+The router tracks consecutive exceptions separately for code, diff, JSON,
+search, log, table, HTML, and text. Three failures open only that strategy for
+60 seconds; while open, the exact input is returned and the compressor is not
+called. Any clean execution resets that strategy, and a post-cooldown trial
+either closes or reopens it. Headroom's reviewed reference applies the same
+three-failure/60-second fail-open effect at pipeline scope; the native adapter
+uses finer isolation because its content strategies execute independently.
 
 ## Configuration
 
@@ -313,9 +349,11 @@ limit is reached, the oldest active entries are evicted first. SQLite uses
 When OpenCode emits `session.deleted`, the plugin deletes that session's CCR
 entries, latest-user-intent state, repetition fingerprints, per-session
 telemetry, cached Read-lifecycle hash/digest references, and the sent-context
-frontier. Process-global historical telemetry remains until the plugin is
-disposed. The plugin's `dispose` hook clears bounded session state and closes
-the store; SQLite close is idempotent. Repetition and Read-lifecycle state store
+frontier. Process-global historical telemetry and reusable compression
+decisions remain until the plugin is disposed; decisions are independently
+TTL/LRU bounded and contain no raw skip payload. The plugin's `dispose` hook
+clears bounded session and decision state and closes the store; SQLite close is
+idempotent. Repetition and Read-lifecycle state store
 bounded fingerprints, hashes, and digests. Context lifecycle additionally keeps
 only changed sent representations needed for byte-exact replay, bounded to
 256,000 characters per session across at most 256 sessions; unchanged raw
@@ -493,6 +531,7 @@ bun run bench:check
 bun run bench:perf
 npm run lint:package
 npm run test:package
+npm audit --omit=dev
 ```
 
 `bun.lock` is the canonical lockfile. `bench:quality` enforces the pinned
@@ -502,7 +541,8 @@ facts, rather than every routine file, remain mandatory. `bench:check` is determ
 rewrite the tracked cost report; `bench:report` is the explicit report writer.
 `bench:perf` reports calibrated token counting cold/hot paths separately and
 measures fixed-seed router, Store put/get, ordinary non-repetition compression,
-bounded retrieval, complete tool and message-transform hooks, SQLite
+cross-session hot decision-cache reuse, bounded retrieval, complete tool and
+message-transform hooks, SQLite
 worker-concurrent writes, and cold-start p50/p95/max results without writing a
 report. It blocks when either P0 10 KiB memory-backed `tool.execute.after` or
 Read-lifecycle `messages.transform` p95 is not below 50 ms; the larger and

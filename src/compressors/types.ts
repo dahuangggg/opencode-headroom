@@ -55,6 +55,8 @@ export interface CompressorResult {
   output: string;
   strategy: ContentKind;
   reason?: string;
+  /** False when the decision depends on transient runtime state. */
+  cacheable?: boolean;
   debug?: CompressionDebugInfo;
   tokenCounts?: {
     original: number;

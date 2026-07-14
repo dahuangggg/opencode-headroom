@@ -78,6 +78,6 @@
 
 ### Resilience and Final Audit
 
-- [ ] Add bounded compression-result and skip-decision caches.
-- [ ] Add per-strategy circuit breaker with fail-open behavior.
-- [ ] Run full build, quality, CCR, performance, package, and host smoke gates.
+- [x] Add bounded compression-result and skip-decision caches.
+- [x] Add per-strategy circuit breaker with fail-open behavior.
+- [x] Run full build, quality, CCR, performance, package, and host smoke gates.

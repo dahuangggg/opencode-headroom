@@ -10,8 +10,9 @@ Reference: `headroom-ai@0.31.0`, commit
 ## Verdict
 
 All approved success criteria pass. The implementation reaches observable
-effect parity without adding provider interception, a proxy, a runtime network
-call, or a large ML dependency.
+effect parity across compression, retrieval, multi-turn context lifecycle,
+context protection, and local resilience without adding provider interception,
+a proxy, a runtime network call, or a large ML dependency.
 
 ## Information correctness and effect
 
@@ -35,15 +36,16 @@ call, or a large ML dependency.
   Headroom table and mixed snapshots are explicitly marked structurally unsafe,
   so they do not require the local implementation to discard headers or mixed
   framing.
-- Local output token counts by fixture were `436`, `872`, `121`, `1404`,
-  `2007`, `4824`, `172`, `1396`, and `84` respectively.
-- Aggregate savings parity was `117.4%` (`2356.6420542630813 / 2007`), above
+- Local output token counts by fixture were `218`, `872`, `121`, `1404`,
+  `2772`, `1594`, `132`, `1396`, and `940` respectively.
+- Aggregate savings parity was `179.5%` (`3602.272066705964 / 2007`), above
   the required `95%`; the blocking per-kind median and named-fixture checks
   passed.
 - `bun run bench:check` passed 78 exact CCR round-trips across memory and
   Bun SQLite, 132 compressed/query protected-fact checks, six exact-code and
-  six exact-diff passthrough cases, and 78 bounded default retrieves. Structured
-  and overall estimated net savings were `95.5%` and `82.6%`.
+  six bounded-diff CCR round-trips, and 78 bounded non-negative default
+  retrieves. Structured and overall estimated net savings were `95.7%` and
+  `82.8%`.
 - Existing-marker, fail-open, cross-session, expiry, deletion, eviction,
   collision, and hard `maxChars` behavior remain covered by the full suite.
 
@@ -64,43 +66,60 @@ call, or a large ML dependency.
   on their documented lifecycle. Repetition state retains signatures and line
   fingerprints, not raw tool output; telemetry/debug privacy tests pass.
 
+## Local resilience
+
+- A versioned compression-decision cache reuses deterministic positive results
+  and stable metadata-only skip decisions across sessions after repetition
+  matching. Its key covers full content and query digests plus every normalized
+  compression-affecting option.
+- Positive cache hits recommit the current exact original to the owning CCR
+  session and rerender collision hashes when necessary. The unified cache is
+  bounded to 512 entries, 2,000,000 result characters, 250,000 characters per
+  result, and a non-sliding 30-minute lifetime.
+- Three consecutive failures open only the affected strategy for 60 seconds.
+  Open-circuit and other transient outcomes fail open byte-exact and never enter
+  either decision-cache tier; a single half-open trial decides recovery.
+- Session deletion clears only session-owned repetition state. Plugin disposal
+  also clears reusable decisions and circuit-breaker state.
+
 ## Performance
 
-- `bun run bench:perf` passed the blocking 10 KiB memory hook gate at
-  `p95=0.944 ms`, below `50 ms`.
+- `bun run bench:perf` passed both blocking 10 KiB memory hook gates:
+  `tool.execute.after p95=1.178 ms` and
+  `messages.transform p95=0.355 ms`, each below `50 ms`.
 - Token counting is reported separately: 10 KiB cold/hot p95 was
-  `0.143/0.161 ms`; 250 KiB cold/hot p95 was `3.331/3.261 ms`.
-- A same-machine detached `v0.2.0` comparison was run three times. Median
-  pre-change memory hook p95 values were approximately `0.427/2.766/6.003 ms`
-  for 10/100/250 KiB; the final run measured
-  `0.944/6.232/24.615 ms`. The greater-than-20% difference is explained by the
-  required calibrated full-content token scan, protected-fact/structure gate,
-  bounded repetition fingerprinting, and the default coding profile's
-  lossless-first pass. Duplicate token scans and mislabeled Store-input
-  preparation were removed during review; no unexplained blocking regression
-  remains, and all absolute measurements stay below the approved P0 budget.
+  `0.142/0.136 ms`; 250 KiB cold/hot p95 was `2.995/3.030 ms`.
+- Ordinary in-memory compression p95 for 10/100/250 KiB was
+  `1.550/5.783/12.519 ms`; a decision-cache hit reduced it to
+  `0.163/1.358/2.744 ms`. The benchmark uses distinct sessions so this row
+  measures cross-session decision reuse rather than repetition folding.
+- SQLite concurrent-write and cold-start rows remain recorded baselines rather
+  than blocking thresholds. No measured hook crossed the approved P0 budget.
 
 ## Build, package, and real host
 
-- `bun test tests`: 215 passed, 0 failed, 0 skipped.
+- `bun test tests`: 367 passed, 0 failed, 1236 assertions.
 - `bun run typecheck`, `bun run build`, `bun run lint:package`, and
-  `bun run test:package` passed.
-- Package smoke rebuilt from clean state, packed 77 files, installed the
+  `bun run test:package` passed; `npm audit --omit=dev` found 0 vulnerabilities.
+- Package smoke rebuilt from clean state, packed 91 files, installed the
   tarball into a temporary consumer, passed `npm ls --all`, compiled the public
   TypeScript API, and initialized Node and Bun imports.
 - A second fresh tarball was installed into an isolated temporary consumer.
   OpenCode `1.17.13` loaded that installed `dist/plugin.js` through
   `opencode debug config` with isolated HOME/XDG directories and no model
-  request. The plugin created `host-smoke.sqlite` with `user_version=2` and
-  tables `ccr_entries`, `ccr_hash_history`, and `sqlite_sequence`.
+  request. The plugin created `host-smoke.sqlite` with `user_version=2`, the
+  required `ccr_entries` and `ccr_hash_history` tables, and file mode `600`.
 
 ## Review
 
 The final five-axis review covered correctness, readability, architecture,
-security, and performance. The lossless increment's candidate-selection logic
-was extracted from the routing closure before acceptance, and expansion of
-untrusted repeat markers is hard-bounded. An earlier required issue was also
-fixed: a trusted pre-counted token value briefly entered the public engine
-input type. It now crosses only the concrete native-plugin boundary, so
-external engine callers cannot spoof the acceptance count. No Critical or
-Required findings remain.
+security, and performance. Adversarial review reproduced one required issue:
+an open strategy inside mixed output could initially leave a stable-looking
+top-level result that was eligible for caching. Mixed routing now propagates a
+transient `cacheable=false` signal through both unchanged and partially changed
+results, and a controllable-clock test proves recovery recompresses after the
+60-second cooldown. Metadata validation was also tightened so cached token
+counts cannot carry invalid runtime values. Collision expiry, Store rollback,
+lone-surrogate digests, positive and negative mixed recovery, and exact CCR
+retrieval were independently re-probed. No Critical or Required findings
+remain.

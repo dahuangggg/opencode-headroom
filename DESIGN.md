@@ -227,6 +227,41 @@ through the canonical Store commit and `mode=full` returns the new call's exact
 bytes. Matches cannot cross sessions, expire with their owning entry, and are
 removed on session deletion or disposal.
 
+### Bounded decision cache and circuit breaker
+
+The repetition store is checked before the process-local compression decision
+cache so an exact same-session repeat still produces the more compact repetition
+pointer. The decision key is versioned and contains full digests of the original
+content and bounded relevance query plus normalized strength/profile,
+lossless-first mode, and any trusted pre-counted original-token value. TTL,
+retrieve defaults, call identity, and session identity do not affect the
+deterministic compression choice and are intentionally excluded.
+
+Stable negative decisions store strategy, reason, and original-token count but
+never source/output bytes. Positive decisions retain only the bounded compressed
+candidate, its rendered CCR hash, bounded strategy, and token counts; compressor
+debug is not cached. They enter the cache only after a successful canonical Store commit. A
+hit always performs a new Store commit for the current session's exact original;
+when the committed hash differs from the cached rendered hash, the engine reruns
+the deterministic strategy for that hash before returning. Same-session
+repetition is therefore preserved and forced hash collisions cannot produce a
+marker that retrieves another original.
+
+Both tiers share a 512-entry global LRU, a 30-minute absolute TTL, and positive
+result budgets of 2,000,000 retained UTF-16 code units total and 250,000 per
+entry. Session deletion does not flush this process cache; plugin disposal does.
+No cache key, skip entry, telemetry record, or debug trace contains raw intent,
+arguments, or the assembled relevance query.
+
+`StrategyCircuitBreaker` wraps each detected content strategy at the router.
+Three consecutive exceptions open that strategy for 60 seconds, during which
+the router returns the exact input with `strategy_circuit_open`; successful
+execution resets the count, and an unsuccessful post-cooldown trial reopens it.
+Mixed-section recursion shares the same breaker. Open-circuit outcomes are
+transient and never enter either decision-cache tier. This preserves
+Headroom's fail-open threshold/cooldown effect while narrowing the failure
+domain from its pipeline-wide breaker to independent native strategies.
+
 ### Context lifecycle
 
 `ContextLifecycleManager` owns the native approximation of Headroom's frozen

@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  assertDecisionCachePerformanceReported,
   assertP0HookLatency,
   assertP0MessageTransformLatency,
   assertTokenizerPerformanceReported,
@@ -66,6 +67,20 @@ describe("performance release gate", () => {
     );
     expect(() => assertTokenizerPerformanceReported([hot])).toThrow(
       /cold token-counter/i,
+    );
+  });
+
+  it("requires a hot decision-cache compression row", () => {
+    const cacheHit: PerformanceResultRow = {
+      ...hookResult(10),
+      operation: "engine.compress(cache-hit)",
+    };
+
+    expect(() =>
+      assertDecisionCachePerformanceReported([cacheHit]),
+    ).not.toThrow();
+    expect(() => assertDecisionCachePerformanceReported([])).toThrow(
+      /decision-cache/i,
     );
   });
 });
