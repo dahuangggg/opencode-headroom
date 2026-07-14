@@ -277,17 +277,26 @@ Verify:
 
 ### Phase 1: Add cache-aware Context Lifecycle
 
-- Track a bounded, session-scoped frontier of message identities already seen
-  by the transform hook.
+- Track a bounded, session-scoped frontier of completed part identities already
+  seen by the transform hook.
 - Treat the first observation of a session as frozen history and only permit
-  later, previously unseen messages to enter the mutable live zone.
+  later, previously unseen completed parts to enter the mutable live zone.
+- Replay the exact changed representation sent on an earlier request when
+  OpenCode reloads the part's raw stored output.
+- Preflight replayed Read markers and restore raw output when exact CCR backing
+  is no longer active.
 - Apply the same live-zone boundary to Read lifecycle and span deduplication.
 
 Acceptance:
 - Previously observed messages remain byte-exact when later turns are appended.
 - A newly appended tool result can still be compressed against frozen history.
+- A previously transformed live part replays the same sent bytes; a Read marker
+  does so only while its exact CCR backing remains active, otherwise raw is
+  restored.
 - Unknown identities, overflow, and storage failures fail open conservatively.
 - Session deletion and plugin disposal clear all lifecycle state.
+- Same-session transforms, cleanup, and disposal cannot race asynchronous
+  lifecycle writes; active queues are bounded.
 
 Verify:
 - `bun test tests/context-lifecycle.test.ts tests/read-lifecycle.test.ts tests/multiturn-parity.test.ts tests/plugin.test.ts`

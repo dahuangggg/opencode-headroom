@@ -49,12 +49,14 @@
 
 ### Cache-aware Context Lifecycle
 
-- [ ] Add RED tests for first-observation freeze and appended live messages.
-- [ ] Add bounded, session-scoped message-frontier tracking.
-- [ ] Prevent Read lifecycle from rewriting previously observed history.
-- [ ] Prevent span deduplication from rewriting previously observed history.
-- [ ] Clear lifecycle state on `session.deleted` and plugin disposal.
-- [ ] Checkpoint: targeted tests, full tests, typecheck, and build.
+- [x] Add RED tests for first-observation freeze and appended live messages.
+- [x] Add bounded, session-scoped message/part-frontier tracking and exact sent-form replay.
+- [x] Prevent Read lifecycle from rewriting previously observed history.
+- [x] Prevent span deduplication from rewriting previously observed history.
+- [x] Validate replayed Read marker backing before every early-exit path.
+- [x] Serialize transforms and cleanup with bounded, abortable session windows.
+- [x] Clear lifecycle state on `session.deleted` and plugin disposal.
+- [x] Checkpoint: targeted tests, full tests, typecheck, and build.
 
 ### Read Lifecycle Defaults
 

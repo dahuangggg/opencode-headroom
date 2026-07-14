@@ -36,6 +36,33 @@ function completedTool(output: string) {
   };
 }
 
+function hostTool(
+  sessionID: string,
+  messageID: string,
+  callID: string,
+  output: string,
+) {
+  return {
+    id: `${callID}-part`,
+    sessionID,
+    messageID,
+    callID,
+    tool: "Bash",
+    ...completedTool(output),
+  };
+}
+
+function hostMessage(
+  sessionID: string,
+  messageID: string,
+  parts: readonly unknown[],
+) {
+  return {
+    info: { id: messageID, sessionID, role: "assistant" },
+    parts,
+  };
+}
+
 function lifecycleTool(
   tool: "Read" | "Edit",
   callID: string,
@@ -86,14 +113,36 @@ describe("OpenCode message span deduplication", () => {
     expect(stats.spansFolded).toBe(1);
   });
 
-  it("uses the experimental message-transform hook without requiring a proxy", async () => {
+  it("uses frozen tool outputs as references without mutating them", () => {
+    const shared = lines("shared", 60);
+    const first = completedTool([...shared, ...lines("old", 20)].join("\n"));
+    const secondOutput = [...shared, ...lines("new", 20)].join("\n");
+    const second = completedTool(secondOutput);
+
+    const stats = deduplicateMessageToolOutputs(
+      [
+        { info: {}, parts: [first] },
+        { info: {}, parts: [second] },
+      ],
+      { canMutateToolPart: () => false },
+    );
+
+    expect(second.state.output).toBe(secondOutput);
+    expect(stats.spansFolded).toBe(0);
+  });
+
+  it("keeps existing history byte-exact on the first plugin transform", async () => {
     const plugin = await HeadroomNativePlugin(pluginInput(), {
       storage: { kind: "memory" },
     });
-    const shared = lines("shared", 12).join("\n");
+    const shared = lines("shared", 60);
+    const firstOutput = [...shared, ...lines("old", 20)].join("\n");
+    const secondOutput = [...shared, ...lines("new", 20)].join("\n");
+    const first = hostTool("existing-session", "message-1", "call-1", firstOutput);
+    const second = hostTool("existing-session", "message-2", "call-2", secondOutput);
     const messages = [
-      { info: {}, parts: [completedTool(shared)] },
-      { info: {}, parts: [completedTool(`${shared}\nunique tail`)] },
+      hostMessage("existing-session", "message-1", [first]),
+      hostMessage("existing-session", "message-2", [second]),
     ];
 
     await plugin["experimental.chat.messages.transform"]!(
@@ -101,10 +150,67 @@ describe("OpenCode message span deduplication", () => {
       { messages } as never,
     );
 
-    expect(messages[0]?.parts[0]).toMatchObject({ state: { output: shared } });
-    expect(messages[1]?.parts[0]).toMatchObject({
-      state: { output: expect.stringContaining("same as msg 1") },
+    expect(first.state.output).toBe(firstOutput);
+    expect(second.state.output).toBe(secondOutput);
+  });
+
+  it("uses the experimental message-transform hook without requiring a proxy", async () => {
+    const plugin = await HeadroomNativePlugin(pluginInput(), {
+      storage: { kind: "memory" },
     });
+    const shared = lines("shared", 12).join("\n");
+    const first = hostTool("dedup-session", "message-1", "call-1", shared);
+    await plugin["experimental.chat.messages.transform"]!(
+      {},
+      {
+        messages: [hostMessage("dedup-session", "message-1", [first])],
+      } as never,
+    );
+    const replayed = hostTool("dedup-session", "message-1", "call-1", shared);
+    const appended = hostTool(
+      "dedup-session",
+      "message-2",
+      "call-2",
+      `${shared}\nunique tail`,
+    );
+    const messages = [
+      hostMessage("dedup-session", "message-1", [replayed]),
+      hostMessage("dedup-session", "message-2", [appended]),
+    ];
+
+    await plugin["experimental.chat.messages.transform"]!(
+      {},
+      { messages } as never,
+    );
+
+    expect(replayed.state.output).toBe(shared);
+    expect(appended.state.output).toContain("same as msg 1");
+
+    const sentRepresentation = appended.state.output;
+    const reloadedFirst = hostTool(
+      "dedup-session",
+      "message-1",
+      "call-1",
+      shared,
+    );
+    const reloadedSecond = hostTool(
+      "dedup-session",
+      "message-2",
+      "call-2",
+      `${shared}\nunique tail`,
+    );
+    await plugin["experimental.chat.messages.transform"]!(
+      {},
+      {
+        messages: [
+          hostMessage("dedup-session", "message-1", [reloadedFirst]),
+          hostMessage("dedup-session", "message-2", [reloadedSecond]),
+        ],
+      } as never,
+    );
+
+    expect(reloadedFirst.state.output).toBe(shared);
+    expect(reloadedSecond.state.output).toBe(sentRepresentation);
   });
 
   it("folds stale Reads through the plugin hook and retrieves the exact original", async () => {
@@ -114,9 +220,15 @@ describe("OpenCode message span deduplication", () => {
     const original = lines("old source", 80).join("\n");
     const read = lifecycleTool("Read", "read-call", "src/auth.ts", original);
     const edit = lifecycleTool("Edit", "edit-call", "src/auth.ts", "Done");
+    await plugin["experimental.chat.messages.transform"]!(
+      {},
+      {
+        messages: [hostMessage("lifecycle-session", "seed-message", [])],
+      } as never,
+    );
     const messages = [
-      { info: {}, parts: [read] },
-      { info: {}, parts: [edit] },
+      hostMessage("lifecycle-session", "read-call-message", [read]),
+      hostMessage("lifecycle-session", "edit-call-message", [edit]),
     ];
 
     await plugin["experimental.chat.messages.transform"]!(
@@ -134,6 +246,140 @@ describe("OpenCode message span deduplication", () => {
     expect(typeof retrieved === "string" ? retrieved : retrieved.output).toBe(
       original,
     );
+  });
+
+  it("keeps a previously sent fresh Read exact after a later write", async () => {
+    const plugin = await HeadroomNativePlugin(pluginInput(), {
+      storage: { kind: "memory" },
+    });
+    const original = lines("fresh source", 80).join("\n");
+    const firstRead = lifecycleTool(
+      "Read",
+      "fresh-read",
+      "src/fresh.ts",
+      original,
+    );
+    await plugin["experimental.chat.messages.transform"]!(
+      {},
+      {
+        messages: [
+          hostMessage(
+            "lifecycle-session",
+            "fresh-read-message",
+            [firstRead],
+          ),
+        ],
+      } as never,
+    );
+
+    const replayedRead = lifecycleTool(
+      "Read",
+      "fresh-read",
+      "src/fresh.ts",
+      original,
+    );
+    const laterEdit = lifecycleTool(
+      "Edit",
+      "fresh-edit",
+      "src/fresh.ts",
+      "Done",
+    );
+    const messages = [
+      hostMessage(
+        "lifecycle-session",
+        "fresh-read-message",
+        [replayedRead],
+      ),
+      hostMessage(
+        "lifecycle-session",
+        "fresh-edit-message",
+        [laterEdit],
+      ),
+    ];
+
+    await plugin["experimental.chat.messages.transform"]!(
+      {},
+      { messages } as never,
+    );
+
+    expect(replayedRead.state.output).toBe(original);
+  });
+
+  it("forgets sent representations when the owning session is deleted", async () => {
+    const plugin = await HeadroomNativePlugin(pluginInput(), {
+      storage: { kind: "memory" },
+    });
+    const original = lines("deletable source", 80).join("\n");
+    await plugin["experimental.chat.messages.transform"]!(
+      {},
+      {
+        messages: [hostMessage("deletable-session", "seed", [])],
+      } as never,
+    );
+    const read = lifecycleTool(
+      "Read",
+      "delete-read",
+      "src/delete.ts",
+      original,
+    );
+    read.sessionID = "deletable-session";
+    const edit = lifecycleTool(
+      "Edit",
+      "delete-edit",
+      "src/delete.ts",
+      "Done",
+    );
+    edit.sessionID = "deletable-session";
+    await plugin["experimental.chat.messages.transform"]!(
+      {},
+      {
+        messages: [
+          hostMessage("deletable-session", "delete-read-message", [read]),
+          hostMessage("deletable-session", "delete-edit-message", [edit]),
+        ],
+      } as never,
+    );
+    expect(read.state.output).toContain("is stale after a later write");
+
+    await plugin.event!({
+      event: {
+        type: "session.deleted",
+        properties: { info: { id: "deletable-session" } },
+      },
+    } as never);
+    const reloadedRead = lifecycleTool(
+      "Read",
+      "delete-read",
+      "src/delete.ts",
+      original,
+    );
+    reloadedRead.sessionID = "deletable-session";
+    const reloadedEdit = lifecycleTool(
+      "Edit",
+      "delete-edit",
+      "src/delete.ts",
+      "Done",
+    );
+    reloadedEdit.sessionID = "deletable-session";
+    await plugin["experimental.chat.messages.transform"]!(
+      {},
+      {
+        messages: [
+          hostMessage(
+            "deletable-session",
+            "delete-read-message",
+            [reloadedRead],
+          ),
+          hostMessage(
+            "deletable-session",
+            "delete-edit-message",
+            [reloadedEdit],
+          ),
+        ],
+      } as never,
+    );
+
+    expect(reloadedRead.state.output).toBe(original);
   });
 
   it("leaves stale Reads exact under the legacy profile", async () => {

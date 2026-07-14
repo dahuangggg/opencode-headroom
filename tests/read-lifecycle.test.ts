@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 
+import { ContextLifecycleManager } from "../src/session/context-lifecycle.js";
 import { ReadLifecycleManager } from "../src/session/read-lifecycle.js";
 import { MemoryCCRStore } from "../src/store/memory.js";
 
@@ -15,6 +16,8 @@ function completedTool(input: {
   callID: string;
   filePath: string;
   output: string;
+  partID?: string;
+  messageID?: string;
   offset?: number;
   limit?: number;
   cacheControl?: boolean;
@@ -22,6 +25,8 @@ function completedTool(input: {
   return {
     type: "tool",
     tool: input.tool,
+    ...(input.partID ? { id: input.partID } : {}),
+    ...(input.messageID ? { messageID: input.messageID } : {}),
     sessionID: "read-session",
     callID: input.callID,
     metadata: input.cacheControl ? { cache_control: { type: "ephemeral" } } : {},
@@ -338,5 +343,87 @@ describe("Read lifecycle", () => {
     expect(outputOf(read)).toBe(original);
     expect(stats.operationsOverflowed).toBe(true);
     expect((await store.stats()).entryCount).toBe(0);
+  });
+
+  it("restores a frozen replay when its CCR backing entry was evicted", async () => {
+    const store = new MemoryCCRStore(undefined, { maxEntries: 1 });
+    const context = new ContextLifecycleManager();
+    const manager = new ReadLifecycleManager(store, {
+      basePath: "/repo",
+      ttlMs: 60_000,
+    });
+    context
+      .begin([
+        {
+          info: { id: "seed", sessionID: "read-session" },
+          parts: [],
+        },
+      ])
+      .commit();
+    const original = largeRead("evicted backing source");
+    const makeMessages = () => {
+      const read = completedTool({
+        tool: "Read",
+        callID: "evicted-read",
+        partID: "evicted-read-part",
+        messageID: "read-message",
+        filePath: "src/evicted.ts",
+        output: original,
+      });
+      const edit = completedTool({
+        tool: "Edit",
+        callID: "evicted-edit",
+        partID: "evicted-edit-part",
+        messageID: "edit-message",
+        filePath: "src/evicted.ts",
+        output: "Done",
+      });
+      return {
+        read,
+        messages: [
+          {
+            info: { id: "read-message", sessionID: "read-session" },
+            parts: [read],
+          },
+          {
+            info: { id: "edit-message", sessionID: "read-session" },
+            parts: [edit],
+          },
+        ],
+      };
+    };
+
+    const first = makeMessages();
+    await context.run(first.messages, async (window) => {
+      await manager.apply(first.messages, window);
+    });
+    const marker = outputOf(first.read);
+    const evictedHash = marker.match(/hash=([0-9a-f]{24})/)?.[1];
+    expect(evictedHash).toBeDefined();
+
+    await store.put({
+      sessionID: "read-session",
+      callID: "replacement-entry",
+      tool: "Bash",
+      strategy: "test_eviction",
+      originalContent: "replacement original",
+      compressedContent: "replacement compressed",
+      originalTokens: 2,
+      compressedTokens: 1,
+      ttlMs: 60_000,
+    });
+    expect(await store.peek(evictedHash!, "read-session")).toBeNull();
+
+    const reloaded = makeMessages();
+    const compactedReload = [reloaded.messages[0]!];
+    await context.run(compactedReload, async (window) => {
+      await manager.apply(compactedReload, window);
+    });
+
+    expect(outputOf(reloaded.read)).toBe(original);
+    const reloadedAgain = makeMessages();
+    const nextWindow = context.begin([reloadedAgain.messages[0]!]);
+    expect(outputOf(reloadedAgain.read)).toBe(original);
+    expect(nextWindow.stats.replayedToolParts).toBe(0);
   });
 });

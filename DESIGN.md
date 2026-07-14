@@ -56,7 +56,8 @@ or Bun-backed persistent adapter failure is surfaced during plugin startup.
 - resolves policy before any file-backed output read;
 - converts hook input into the engine interface;
 - registers `headroom_retrieve` and `headroom_stats`;
-- applies Read lifecycle before repeated-span folding in the message transform;
+- establishes one cache-safe mutation window, then applies Read lifecycle before
+  repeated-span folding inside that boundary;
 - attaches compact `output.metadata.headroom` data;
 - handles session deletion and plugin disposal;
 - records safe local telemetry and optional debug traces.
@@ -214,6 +215,38 @@ through the canonical Store commit and `mode=full` returns the new call's exact
 bytes. Matches cannot cross sessions, expire with their owning entry, and are
 removed on session deletion or disposal.
 
+### Context lifecycle
+
+`ContextLifecycleManager` owns the native approximation of Headroom's frozen
+prefix and live zone. The OpenCode transform hook has no provider cache usage
+input, so the manager never guesses a cache-token boundary. It seeds the first
+observation of a session without mutation, keys completed tool parts by stable
+composite host identity (`message + part + call`), and exposes only previously
+unseen completed parts as mutable on later transforms. Explicit cache-control
+metadata can only expand the frozen prefix.
+
+OpenCode reloads stored raw parts before each transform instead of persisting
+plugin mutations. For each changed live part, Context lifecycle therefore keeps
+its source digest, sent digest, and final sent representation. A later raw reload
+is replaced with that exact sent representation before any transform runs.
+Frozen parts can still be reference inputs for span deduplication, but neither
+Read lifecycle nor dedup may target them. Missing or inconsistent identities,
+capacity saturation, and first observation all fail conservatively.
+
+Transforms for the same session are serialized through a bounded queue. A
+window commits only after the entire transform succeeds; exceptions abort every
+live mutation. Direct overlapping windows conflict and roll back, and commit
+also verifies the exact session generation and part record captured at begin.
+Session deletion uses the same exclusive queue, while disposal rejects new work
+and drains in-flight transforms before state and storage are cleared.
+
+State is bounded to 256 sessions, 2,048 completed-part identities per session,
+and 256,000 retained representation characters per session. A candidate that
+cannot be retained for exact replay is rolled back before the hook returns.
+Replay-bearing sessions are not evicted; when every session slot is protected,
+new sessions remain untracked and unmodified. Session deletion and plugin
+disposal remove this state.
+
 ### Read lifecycle
 
 `ReadLifecycleManager` scans completed OpenCode tool parts before each model
@@ -227,14 +260,17 @@ the entire lifecycle pass fails open for the request; it never classifies or
 rewrites a partial history. Marker paths are display-only and have Unicode
 control and formatting characters removed before they enter model context.
 
-The latest explicit cache-control marker freezes its complete message prefix;
-no lifecycle replacement is allowed at or before it. Eligible originals enter
-CCR before mutation, and the manager replays only bounded callID-to-hash/digest
-state. A non-counting Store `peek` verifies that a cached hash remains live;
-an evicted entry is committed again before its marker is emitted. Store or
-classification failures are fail-open. The lifecycle pass runs before
-prefix-monotonic span folding so a fresh latest Read remains available as the
-model's source of truth.
+The shared Context lifecycle mutation window freezes all previously sent parts;
+the latest explicit cache-control marker may freeze additional new parts. No
+lifecycle replacement is allowed outside that live window. Eligible originals
+enter CCR before mutation, and the Read manager keeps bounded
+callID-to-hash/digest state. A non-counting Store `peek` verifies that a cached
+hash remains live. Replayed Read markers are preflighted before operation
+overflow or fresh/stale classification; the entry must match the session, exact
+sent marker, and raw source digest. A missing, expired, evicted, or mismatched
+entry invalidates the replay and restores raw output. Store or classification
+failures are fail-open. The lifecycle pass runs before span folding so a fresh
+latest Read remains available as the model's source of truth.
 
 ### Canonical CCR commit
 
@@ -365,8 +401,12 @@ fail-open.
   original output remains unchanged.
 - File-backed output is read only through the trusted source boundary.
 - Every emitted marker uses the store's committed canonical key.
-- Read lifecycle never rewrites the explicit cache-controlled prefix and never
-  emits a marker until its CCR entry is confirmed live.
+- Context lifecycle never mutates first-observed or previously sent completed
+  tool parts, and replays an earlier changed representation byte-exact while
+  any referenced CCR backing remains valid.
+- Read lifecycle never rewrites the frozen prefix with a new marker and never
+  leaves a replayed marker in context unless its CCR entry is confirmed live;
+  invalid backing restores the raw Read.
 - Read lifecycle leaves an over-limit operation history unchanged and removes
   control/formatting characters from display paths in its markers.
 - Retrieval is scoped to the current session.

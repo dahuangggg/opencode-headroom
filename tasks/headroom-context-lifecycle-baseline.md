@@ -55,12 +55,20 @@ after this hook. The native plugin therefore uses a conservative observable
 frontier instead of pretending to know the provider's exact cache state:
 
 - The first observation of a session seeds the frontier and changes nothing.
-- On later transforms, previously observed message identities are frozen.
-- Previously unseen messages form the live zone for that invocation.
+- On later transforms, previously observed completed part identities are frozen.
+- Previously unseen completed parts form the live zone for that invocation,
+  including a part that becomes completed inside an existing message.
+- Changed live representations are committed in memory and replayed exactly when
+  OpenCode reloads their raw stored form on the next request.
+- A replayed Read marker is kept only while its exact session-scoped CCR backing
+  remains active; otherwise the raw stored Read is restored fail-open.
 - Explicit `cache_control` metadata can only expand the frozen region.
-- Missing or malformed identity information is frozen, never guessed mutable.
+- Missing, inconsistent, or malformed identity information is frozen, never
+  guessed mutable.
 - Frozen history remains available as a deduplication reference but cannot be a
   mutation target.
+- Same-session transforms and deletion are serialized; disposal drains the
+  bounded queue before clearing lifecycle and CCR state.
 
 This is intentionally stricter than a proxy with provider-response telemetry.
 It preserves the user-visible cache effect while staying within the native

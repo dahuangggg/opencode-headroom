@@ -459,6 +459,21 @@ async function benchmarkPluginMessageTransform(
     if (!transform) {
       throw new Error("plugin did not register messages.transform");
     }
+    for (let offset = 0; offset < WARMUP_RUNS + SAMPLE_RUNS; offset += 1) {
+      const iteration = offset - WARMUP_RUNS;
+      const sessionID = `perf-messages-${backend}-${payload.label}-${iteration}`;
+      await transform(
+        {},
+        {
+          messages: [
+            {
+              info: { id: `seed-${iteration}`, sessionID },
+              parts: [],
+            },
+          ],
+        } as never,
+      );
+    }
     const distribution = await measure(async (iteration) => {
       const sessionID = `perf-messages-${backend}-${payload.label}-${iteration}`;
       const read = completedPerformanceTool({
@@ -479,8 +494,14 @@ async function benchmarkPluginMessageTransform(
         {},
         {
           messages: [
-            { info: {}, parts: [read] },
-            { info: {}, parts: [edit] },
+            {
+              info: { id: read.messageID, sessionID },
+              parts: [read],
+            },
+            {
+              info: { id: edit.messageID, sessionID },
+              parts: [edit],
+            },
           ],
         } as never,
       );

@@ -4,6 +4,10 @@ import { containsCCRMarker } from "../markers.js";
 import { createContentDigest } from "../store/ccr.js";
 import type { CCRStore } from "../store/types.js";
 import { estimateTokens } from "../token.js";
+import type {
+  ContextMutationWindow,
+  ReplayedToolPart,
+} from "./context-lifecycle.js";
 
 export interface ReadLifecycleOptions {
   basePath: string;
@@ -18,6 +22,7 @@ export interface ReadLifecycleStats {
   readsSuperseded: number;
   replacementsApplied: number;
   frozenReadsSkipped: number;
+  invalidReplaysRestored: number;
   bytesSaved: number;
   operationsOverflowed: boolean;
 }
@@ -30,12 +35,26 @@ interface CompletedToolStateLike {
 }
 
 interface ToolPartLike {
+  source: object;
   tool: string;
   sessionID: string;
   callID?: string;
   metadata?: unknown;
   state: CompletedToolStateLike;
 }
+
+interface ReplayableReadPart {
+  source: object;
+  sessionID: string;
+  callID?: string;
+}
+
+type ReadMutationWindow = Pick<
+  ContextMutationWindow,
+  | "canMutateToolPart"
+  | "replayForToolPart"
+  | "invalidateReplayForToolPart"
+>;
 
 interface ReadRange {
   full: boolean;
@@ -69,6 +88,8 @@ const WRITE_TOOLS = new Set([
   "notebookedit",
   "apply_patch",
 ]);
+const READ_LIFECYCLE_MARKER_RE =
+  /^\[Read of [^\]]+ Retrieve original: hash=([0-9a-fA-F]{24})\]$/;
 
 function record(value: unknown): Record<string, unknown> | undefined {
   return value && typeof value === "object" && !Array.isArray(value)
@@ -98,6 +119,7 @@ function completedToolPart(value: unknown): ToolPartLike | undefined {
   const input = record(state.input);
   if (!input) return undefined;
   return {
+    source: candidate,
     tool: candidate.tool,
     sessionID: candidate.sessionID,
     ...(typeof candidate.callID === "string"
@@ -105,6 +127,29 @@ function completedToolPart(value: unknown): ToolPartLike | undefined {
       : {}),
     metadata: candidate.metadata,
     state: state as unknown as CompletedToolStateLike,
+  };
+}
+
+function replayableReadPart(value: unknown): ReplayableReadPart | undefined {
+  const candidate = record(value);
+  const state = record(candidate?.state);
+  if (
+    candidate?.type !== "tool" ||
+    typeof candidate.tool !== "string" ||
+    candidate.tool.toLowerCase() !== "read" ||
+    typeof candidate.sessionID !== "string" ||
+    !candidate.sessionID ||
+    state?.status !== "completed" ||
+    typeof state.output !== "string"
+  ) {
+    return undefined;
+  }
+  return {
+    source: candidate,
+    sessionID: candidate.sessionID,
+    ...(typeof candidate.callID === "string" && candidate.callID
+      ? { callID: candidate.callID }
+      : {}),
   };
 }
 
@@ -159,6 +204,10 @@ function lifecycleMarker(
       ? "is stale after a later write"
       : "is superseded by a later Read";
   return `[Read of ${displayPath} ${reason}. Retrieve original: hash=${hash}]`;
+}
+
+function lifecycleMarkerHash(content: string): string | undefined {
+  return READ_LIFECYCLE_MARKER_RE.exec(content)?.[1]?.toLowerCase();
 }
 
 function scanOperations(
@@ -349,8 +398,53 @@ export class ReadLifecycleManager {
     return entry.compressedContent;
   }
 
+  private async replayHasBacking(
+    sessionID: string,
+    replay: ReplayedToolPart,
+  ): Promise<boolean> {
+    const hash = lifecycleMarkerHash(replay.sentOutput);
+    if (!hash) return true;
+    if (!this.store.peek) return false;
+    const active = await this.store.peek(hash, sessionID);
+    return Boolean(
+      active &&
+        active.compressedContent === replay.sentOutput &&
+        createContentDigest(active.originalContent) ===
+          createContentDigest(replay.sourceOutput),
+    );
+  }
+
+  private async validateReplayedReadMarkers(
+    messages: readonly { parts: readonly unknown[] }[],
+    mutation: ReadMutationWindow | undefined,
+    stats: ReadLifecycleStats,
+  ): Promise<void> {
+    if (!mutation) return;
+    for (const message of messages) {
+      for (const value of message.parts) {
+        const read = replayableReadPart(value);
+        if (!read) continue;
+        const replay = mutation.replayForToolPart(read.source);
+        if (!replay || !lifecycleMarkerHash(replay.sentOutput)) continue;
+        let backed = false;
+        try {
+          backed = await this.replayHasBacking(read.sessionID, replay);
+        } catch {
+          // A marker with unverifiable backing is less safe than raw output.
+        }
+        if (!backed && mutation.invalidateReplayForToolPart(read.source)) {
+          if (read.callID) {
+            this.replacements.delete(`${read.sessionID}\0${read.callID}`);
+          }
+          stats.invalidReplaysRestored += 1;
+        }
+      }
+    }
+  }
+
   async apply(
     messages: readonly { parts: readonly unknown[] }[],
+    mutation?: ReadMutationWindow,
   ): Promise<ReadLifecycleStats> {
     const stats: ReadLifecycleStats = {
       readsTotal: 0,
@@ -358,9 +452,11 @@ export class ReadLifecycleManager {
       readsSuperseded: 0,
       replacementsApplied: 0,
       frozenReadsSkipped: 0,
+      invalidReplaysRestored: 0,
       bytesSaved: 0,
       operationsOverflowed: false,
     };
+    await this.validateReplayedReadMarkers(messages, mutation, stats);
     const { operations, frozenThrough, overflowed } = scanOperations(
       messages,
       this.options.basePath,
@@ -381,7 +477,10 @@ export class ReadLifecycleManager {
       if (state === "stale") stats.readsStale += 1;
       else stats.readsSuperseded += 1;
 
-      if (operation.messageIndex <= frozenThrough) {
+      const frozen = mutation
+        ? !mutation.canMutateToolPart(operation.part.source)
+        : operation.messageIndex <= frozenThrough;
+      if (frozen) {
         stats.frozenReadsSkipped += 1;
         continue;
       }

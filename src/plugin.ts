@@ -18,6 +18,7 @@ import {
 import { NativeHeadroomCompatibleEngine } from "./engine/native.js";
 import { containsCCRMarker } from "./markers.js";
 import { resolveToolPolicy, type ResolvedToolPolicy } from "./policy.js";
+import { ContextLifecycleManager } from "./session/context-lifecycle.js";
 import { SessionIntentStore } from "./session/intent.js";
 import { deduplicateMessageToolOutputs } from "./session/message-dedup.js";
 import { ReadLifecycleManager } from "./session/read-lifecycle.js";
@@ -222,6 +223,7 @@ export const HeadroomNativePlugin: Plugin = async (pluginInput, options = {}) =>
     losslessThenLossy: config.profile === "coding",
   });
   const sessionIntents = new SessionIntentStore();
+  const contextLifecycle = new ContextLifecycleManager();
   const readLifecycle = config.readLifecycle
     ? new ReadLifecycleManager(store, {
         basePath,
@@ -328,24 +330,35 @@ export const HeadroomNativePlugin: Plugin = async (pluginInput, options = {}) =>
     },
     "experimental.chat.messages.transform": async (_input, output) => {
       try {
-        await readLifecycle?.apply(output.messages);
-        deduplicateMessageToolOutputs(output.messages);
+        await contextLifecycle.run(output.messages, async (mutationWindow) => {
+          await readLifecycle?.apply(output.messages, mutationWindow);
+          deduplicateMessageToolOutputs(output.messages, mutationWindow);
+        });
       } catch {
         // Request transforms must fail open so the model still receives context.
       }
     },
     event: async ({ event }) => {
       if (event.type === "session.deleted") {
-        await store.deleteSession(event.properties.info.id);
-        engine.deleteSessionState(event.properties.info.id);
-        telemetry.deleteSession(event.properties.info.id);
-        sessionIntents.delete(event.properties.info.id);
-        readLifecycle?.deleteSession(event.properties.info.id);
+        const sessionID = event.properties.info.id;
+        await contextLifecycle.runSessionExclusive(sessionID, async () => {
+          try {
+            await store.deleteSession(sessionID);
+          } finally {
+            engine.deleteSessionState(sessionID);
+            telemetry.deleteSession(sessionID);
+            sessionIntents.delete(sessionID);
+            contextLifecycle.deleteSession(sessionID);
+            readLifecycle?.deleteSession(sessionID);
+          }
+        });
       }
     },
     dispose: async () => {
+      await contextLifecycle.closeAndDrain();
       engine.clearSessionState();
       sessionIntents.clear();
+      contextLifecycle.clear();
       readLifecycle?.clear();
       await store.close();
     },

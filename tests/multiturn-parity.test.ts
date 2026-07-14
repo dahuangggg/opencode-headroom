@@ -23,8 +23,20 @@ function sourceLines(prefix: string, count: number): string[] {
   );
 }
 
-function completedTool(output: string) {
+function completedTool(
+  output: string,
+  identity?: { sessionID: string; messageID: string; callID: string },
+) {
   return {
+    ...(identity
+      ? {
+          id: `${identity.callID}-part`,
+          sessionID: identity.sessionID,
+          messageID: identity.messageID,
+          callID: identity.callID,
+          tool: "Bash",
+        }
+      : {}),
     type: "tool",
     state: {
       status: "completed",
@@ -72,9 +84,39 @@ describe("Headroom coding-profile multi-turn effects", () => {
     expect(firstOutput.output).toBe(firstRead);
     expect(secondOutput.output).toBe(secondRead);
 
+    const firstIdentity = {
+      sessionID: "coding-session",
+      messageID: "message-1",
+      callID: "read-1",
+    };
+    await plugin["experimental.chat.messages.transform"]!(
+      {},
+      {
+        messages: [
+          {
+            info: {
+              id: firstIdentity.messageID,
+              sessionID: firstIdentity.sessionID,
+            },
+            parts: [completedTool(firstOutput.output, firstIdentity)],
+          },
+        ],
+      } as never,
+    );
+    const secondIdentity = {
+      sessionID: "coding-session",
+      messageID: "message-2",
+      callID: "read-2",
+    };
     const messages = [
-      { info: {}, parts: [completedTool(firstOutput.output)] },
-      { info: {}, parts: [completedTool(secondOutput.output)] },
+      {
+        info: { id: "message-1", sessionID: "coding-session" },
+        parts: [completedTool(firstOutput.output, firstIdentity)],
+      },
+      {
+        info: { id: "message-2", sessionID: "coding-session" },
+        parts: [completedTool(secondOutput.output, secondIdentity)],
+      },
     ];
     await plugin["experimental.chat.messages.transform"]!(
       {},

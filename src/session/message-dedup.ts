@@ -3,6 +3,7 @@ import {
   type SpanDedupBlock,
   type SpanDedupStats,
 } from "./span-dedup.js";
+import type { ContextMutationWindow } from "./context-lifecycle.js";
 
 interface CompletedToolStateLike {
   output: string;
@@ -10,6 +11,7 @@ interface CompletedToolStateLike {
 }
 
 interface ToolOutputRef {
+  part: object;
   state: CompletedToolStateLike;
 }
 
@@ -33,11 +35,15 @@ function completedToolOutput(part: unknown): ToolOutputRef | undefined {
   if (state?.status !== "completed" || typeof state.output !== "string") {
     return undefined;
   }
-  return { state: state as unknown as CompletedToolStateLike };
+  return {
+    part: candidate,
+    state: state as unknown as CompletedToolStateLike,
+  };
 }
 
 export function deduplicateMessageToolOutputs(
   messages: readonly { parts: readonly unknown[] }[],
+  mutation?: Pick<ContextMutationWindow, "canMutateToolPart">,
 ): SpanDedupStats {
   const references: ToolOutputRef[] = [];
   const blocks: SpanDedupBlock[] = [];
@@ -51,7 +57,10 @@ export function deduplicateMessageToolOutputs(
       blocks.push({
         text: reference.state.output,
         turn: messageIndex + 1,
-        protected: hasCacheControl(candidate?.metadata, reference.state.metadata),
+        protected:
+          hasCacheControl(candidate?.metadata, reference.state.metadata) ||
+          (mutation !== undefined &&
+            !mutation.canMutateToolPart(reference.part)),
       });
     });
   });
