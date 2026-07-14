@@ -14,9 +14,9 @@
 - [x] Add token-counter contract.
 - [x] Calibrate prose, CJK, code, and high-entropy fallback behavior.
 - [x] Use one counter for thresholds, acceptance, metadata, and telemetry.
-- [ ] Add bounded session intent capture and cleanup.
-- [ ] Combine session intent and safe scalar tool arguments for relevance.
-- [ ] Prove intent and queries never enter telemetry/debug output.
+- [x] Add bounded session intent capture and cleanup.
+- [x] Combine session intent and safe scalar tool arguments for relevance.
+- [x] Prove intent and queries never enter telemetry/debug output.
 - [ ] Checkpoint 2: full gates plus cold/hot tokenizer performance.
 
 ## Compression Coverage

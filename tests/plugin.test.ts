@@ -89,6 +89,7 @@ describe("OpenCode plugin", () => {
     expect(plugin.tool?.headroom_retrieve).toBeDefined();
     expect(plugin.tool?.headroom_stats).toBeDefined();
     expect(plugin["tool.execute.after"]).toBeTypeOf("function");
+    expect(plugin["chat.message"]).toBeTypeOf("function");
   });
 
   it("compresses large tool output after execution", async () => {

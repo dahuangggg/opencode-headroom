@@ -22,6 +22,7 @@ export interface ToolOutputCompressionInput {
   sessionID: string;
   callID: string;
   args: unknown;
+  intent?: string;
   output: string;
   ttlMs: number;
   strength?: CompressionStrength;

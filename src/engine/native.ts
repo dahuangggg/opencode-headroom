@@ -14,14 +14,19 @@ import type {
   ToolOutputCompressionResult,
 } from "./types.js";
 
-function queryFromArgs(args: unknown): string {
-  if (!args || typeof args !== "object") {
-    return "";
-  }
-  return Object.values(args as Record<string, unknown>)
-    .filter((value) => ["string", "number", "boolean"].includes(typeof value))
-    .join(" ")
-    .slice(0, 300);
+export function buildCompressionQuery(args: unknown, intent?: string): string {
+  const scalarArgs =
+    args && typeof args === "object"
+      ? Object.values(args as Record<string, unknown>)
+          .filter((value) =>
+            ["string", "number", "boolean"].includes(typeof value),
+          )
+          .join(" ")
+      : "";
+  return [intent?.trim(), scalarArgs]
+    .filter((value): value is string => Boolean(value))
+    .join("\n")
+    .slice(0, 2_000);
 }
 
 export class NativeHeadroomCompatibleEngine implements CompressionEngine {
@@ -52,7 +57,7 @@ export class NativeHeadroomCompatibleEngine implements CompressionEngine {
     const compressed = compressByContentType({
       content: input.output,
       hash,
-      query: queryFromArgs(input.args),
+      query: buildCompressionQuery(input.args, input.intent),
       profile,
     });
     const compressedTokens = estimateTokens(compressed.output);
@@ -93,7 +98,7 @@ export class NativeHeadroomCompatibleEngine implements CompressionEngine {
         const finalized = compressByContentType({
           content: input.output,
           hash: committedHash,
-          query: queryFromArgs(input.args),
+          query: buildCompressionQuery(input.args, input.intent),
           profile,
         });
         return {

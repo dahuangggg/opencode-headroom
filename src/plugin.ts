@@ -18,6 +18,7 @@ import {
 import { NativeHeadroomCompatibleEngine } from "./engine/native.js";
 import { containsCCRMarker } from "./markers.js";
 import { resolveToolPolicy, type ResolvedToolPolicy } from "./policy.js";
+import { SessionIntentStore } from "./session/intent.js";
 import {
   createTrustedOutputFileSource,
   type TrustedOutputFileReadResult,
@@ -210,6 +211,7 @@ export const HeadroomNativePlugin: Plugin = async (pluginInput, options = {}) =>
   const basePath = pluginBasePath(pluginInput);
   const store = await createCCRStore(resolveStorageConfig(config.storage, basePath));
   const engine = new NativeHeadroomCompatibleEngine(store);
+  const sessionIntents = new SessionIntentStore();
   const telemetry = new LocalTelemetryAggregator({
     requestedAdapter: store.diagnostics.requested,
     activeAdapter: store.diagnostics.active,
@@ -301,13 +303,18 @@ export const HeadroomNativePlugin: Plugin = async (pluginInput, options = {}) =>
   }
 
   return {
+    "chat.message": async (input, output) => {
+      sessionIntents.update(input.sessionID, output.parts);
+    },
     event: async ({ event }) => {
       if (event.type === "session.deleted") {
         await store.deleteSession(event.properties.info.id);
         telemetry.deleteSession(event.properties.info.id);
+        sessionIntents.delete(event.properties.info.id);
       }
     },
     dispose: async () => {
+      sessionIntents.clear();
       await store.close();
     },
     tool: {
@@ -482,6 +489,7 @@ export const HeadroomNativePlugin: Plugin = async (pluginInput, options = {}) =>
           sessionID: input.sessionID,
           callID: input.callID,
           args: input.args,
+          intent: sessionIntents.get(input.sessionID),
           output: originalOutput,
           ttlMs: (policy.ccr?.ttlHours ?? config.ttlHours) * 60 * 60 * 1000,
           strength: policy.strength,
