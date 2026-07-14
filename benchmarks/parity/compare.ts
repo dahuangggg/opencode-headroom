@@ -82,6 +82,16 @@ function headroomIsFactSafe(
   return fixture.protectedFacts.every((fact) => baseline.retainedFacts.includes(fact));
 }
 
+function normalizedLocalOutputTokens(
+  baseline: ParityOracleSnapshot["fixtures"][number],
+  result: LocalParityResult,
+): number {
+  if (result.originalTokens <= 0) {
+    return baseline.originalTokens;
+  }
+  return baseline.originalTokens * (result.outputTokens / result.originalTokens);
+}
+
 export function compareParityResults(
   fixtures: readonly ParityFixture[],
   oracle: ParityOracleSnapshot,
@@ -137,7 +147,11 @@ export function compareParityResults(
   const kinds = [...new Set(safeRows.map(({ fixture }) => fixture.kind))];
   for (const kind of kinds) {
     const rows = safeRows.filter(({ fixture }) => fixture.kind === kind);
-    const localMedian = median(rows.map(({ result }) => result.outputTokens));
+    const localMedian = median(
+      rows.map(({ baseline, result }) =>
+        normalizedLocalOutputTokens(baseline, result),
+      ),
+    );
     const headroomMedian = median(rows.map(({ baseline }) => baseline.outputTokens));
     medianOutputTokensByKind[kind] = {
       local: localMedian,
@@ -157,8 +171,12 @@ export function compareParityResults(
     0,
   );
   const localSavings = safeRows.reduce(
-    (sum, { result }) =>
-      sum + Math.max(0, result.originalTokens - result.outputTokens),
+    (sum, { baseline, result }) =>
+      sum +
+      Math.max(
+        0,
+        baseline.originalTokens - normalizedLocalOutputTokens(baseline, result),
+      ),
     0,
   );
   const savingsParity = upstreamSavings === 0 ? 1 : localSavings / upstreamSavings;

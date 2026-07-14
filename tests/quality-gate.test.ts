@@ -23,6 +23,23 @@ describe("parity quality comparison", () => {
     expect(report.failures).toEqual([]);
   });
 
+  it("compares compression effect without mixing tokenizer scales", async () => {
+    const oracle = await loadParityOracle();
+    const local = oracle.fixtures.map((baseline, index) => ({
+      id: baseline.id,
+      strategy: baseline.strategy,
+      changed: baseline.outputTokens < baseline.originalTokens,
+      output: PARITY_FIXTURES[index]?.content ?? "",
+      originalTokens: baseline.originalTokens * 2,
+      outputTokens: baseline.outputTokens * 2,
+      latencyMs: 1,
+    }));
+
+    const report = compareParityResults(PARITY_FIXTURES, oracle, local);
+
+    expect(report.passed).toBe(true);
+  });
+
   it("names the fixture and metric for every protected-fact regression", async () => {
     const oracle = await loadParityOracle();
     const local = oracle.fixtures.map((baseline, index) => ({
