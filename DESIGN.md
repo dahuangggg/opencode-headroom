@@ -145,7 +145,8 @@ declarations, signatures, types, errors, and query-relevant symbols. Diff
 compression parses files and hunks, preserves Git metadata and two context
 lines around changes, and leaves inputs below 50 lines unchanged. Above the
 private 20-file or 10-hunk ceilings, query matches and error/security priority
-signals rank ahead of routine change density; first and last hunks remain
+signals rank ahead of routine change density, with error/security taking
+precedence when the ceiling fills; first and last hunks remain
 anchors. Candidates saving less than 20% of lines are rejected. The router
 hard-protects error and security changes while allowing ordinary omitted
 files/hunks to rely on CCR. The exact original string, not the routed view, is

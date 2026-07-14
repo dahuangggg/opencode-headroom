@@ -77,6 +77,43 @@ function manyHunksFixture(): string {
   ].join("\n");
 }
 
+function priorityFileFixture(): string {
+  return Array.from({ length: 30 }, (_, index) => [
+    `diff --git a/src/file-${index}.ts b/src/file-${index}.ts`,
+    `--- a/src/file-${index}.ts`,
+    `+++ b/src/file-${index}.ts`,
+    "@@ -1,3 +1,3 @@",
+    `-export const value${index} = false;`,
+    index === 29
+      ? "+throw new SecurityAuthError('credential rotation failed');"
+      : index < 20
+        ? `+export const needleRelease${index} = true;`
+        : `+export const routine${index} = true;`,
+    " export const stable = true;",
+  ].join("\n")).join("\n");
+}
+
+function priorityHunkFixture(): string {
+  return [
+    "diff --git a/src/service.ts b/src/service.ts",
+    "--- a/src/service.ts",
+    "+++ b/src/service.ts",
+    ...Array.from({ length: 13 }, (_, index) => [
+      `@@ -${index * 10 + 1},5 +${index * 10 + 1},5 @@ function priority${index}() {`,
+      " context before one",
+      " context before two",
+      `-  return legacy${index}();`,
+      index === 10
+        ? "+  throw new SecurityAuthError('credential rotation failed');"
+        : index > 0 && index < 10
+          ? `+  return needleRelease${index}();`
+          : `+  return routine${index}();`,
+      " context after one",
+      " context after two",
+    ]).flat(),
+  ].join("\n");
+}
+
 describe("diff compressor", () => {
   it("preserves ordinary diffs when bounded context would not save at least 20%", () => {
     const original = ordinaryDiffFixture();
@@ -164,6 +201,30 @@ describe("diff compressor", () => {
     expect(result.changed).toBe(true);
     expect(result.strategy).toBe("diff");
     expect(result.output).toContain("diff --git a/src/value-23.ts b/src/value-23.ts");
+  });
+
+  it("keeps a security file ahead of query-only files when the file cap fills", () => {
+    const result = compressByContentType({
+      content: priorityFileFixture(),
+      hash,
+      query: "needle release",
+    });
+
+    expect(result.changed).toBe(true);
+    expect(result.output).toContain("SecurityAuthError");
+    expect(result.output.match(/^diff --git /gm)).toHaveLength(20);
+  });
+
+  it("keeps a security hunk ahead of query-only hunks when the hunk cap fills", () => {
+    const result = compressByContentType({
+      content: priorityHunkFixture(),
+      hash,
+      query: "needle release",
+    });
+
+    expect(result.changed).toBe(true);
+    expect(result.output).toContain("SecurityAuthError");
+    expect(result.output.match(/^@@ /gm)).toHaveLength(10);
   });
 
   it("routes diffs through the diff strategy", () => {

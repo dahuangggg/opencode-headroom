@@ -176,8 +176,8 @@ function selectFiles(
   });
   ranked.sort(
     (left, right) =>
-      right.relevance - left.relevance ||
       right.priority - left.priority ||
+      right.relevance - left.relevance ||
       right.changes - left.changes ||
       left.index - right.index,
   );
@@ -211,9 +211,15 @@ function selectHunks(
     .map((hunk, offset) => ({
       hunk,
       index: offset + 1,
+      priority: PRIORITY_RE.test([hunk.header, ...hunk.lines].join("\n")) ? 1 : 0,
       score: scoreHunk(hunk, words),
     }))
-    .sort((left, right) => right.score - left.score || left.index - right.index)
+    .sort(
+      (left, right) =>
+        right.priority - left.priority ||
+        right.score - left.score ||
+        left.index - right.index,
+    )
     .slice(0, MAX_HUNKS_PER_FILE - 2);
   const selected = [
     { hunk: hunks[0]!, index: 0 },
