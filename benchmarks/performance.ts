@@ -10,10 +10,10 @@ import { HeadroomNativePlugin } from "../src/plugin.js";
 import { MemoryCCRStore } from "../src/store/memory.js";
 import { createBunSQLiteStore } from "../src/store/sqlite-bun.js";
 import type { CCRPutInput, CCRStore } from "../src/store/types.js";
-import { estimateTokens } from "../src/token.js";
+import { createTokenCounter, estimateTokens } from "../src/token.js";
 
 type StoreBackend = "memory" | "bun-sqlite";
-type ReportBackend = StoreBackend | "router";
+type ReportBackend = StoreBackend | "router" | "tokenizer";
 
 export interface PayloadCase {
   label: string;
@@ -29,6 +29,8 @@ interface Distribution {
 }
 
 type Operation =
+  | "token.counter(cold)"
+  | "token.counter(hot)"
   | "router.detect"
   | "store.put"
   | "store.get"
@@ -232,6 +234,27 @@ async function benchmarkRouter(
   return { backend: "router", payload, operation: "router.detect", distribution };
 }
 
+async function benchmarkTokenCounter(
+  payload: PayloadCase,
+): Promise<PerformanceResultRow[]> {
+  const cold = await measure(async () => {
+    const counter = createTokenCounter({ model: "performance-calibrated" });
+    if (counter.count(payload.content) <= 0) {
+      throw new Error(`${payload.label} cold token counter returned no tokens`);
+    }
+  });
+  const counter = createTokenCounter({ model: "performance-calibrated" });
+  const hot = await measure(async () => {
+    if (counter.count(payload.content) <= 0) {
+      throw new Error(`${payload.label} hot token counter returned no tokens`);
+    }
+  });
+  return [
+    { backend: "tokenizer", payload, operation: "token.counter(cold)", distribution: cold },
+    { backend: "tokenizer", payload, operation: "token.counter(hot)", distribution: hot },
+  ];
+}
+
 async function benchmarkStoreAndEngine(
   backend: StoreBackend,
   payload: PayloadCase,
@@ -256,11 +279,13 @@ async function benchmarkStoreAndEngine(
     });
 
     let engineHash: string | undefined;
+    let engineSessionID: string | undefined;
     const compress = await measure(async (iteration) => {
       const content = `${payload.content}\nbench/iteration.ts:${100_000 + iteration}:INFO benchmark sample iteration=${iteration}`;
+      engineSessionID = `${sessionID}-compress-${iteration}`;
       const result = await engine.compress({
         tool: "Bash",
-        sessionID,
+        sessionID: engineSessionID,
         callID: `compress-${iteration}`,
         args: { command: "rg target", query: QUERY },
         output: content,
@@ -274,6 +299,9 @@ async function benchmarkStoreAndEngine(
     if (!engineHash) {
       throw new Error(`${backend}/${payload.label} benchmark retained no engine hash`);
     }
+    if (!engineSessionID) {
+      throw new Error(`${backend}/${payload.label} benchmark retained no engine session`);
+    }
 
     const partialRetrieve = await measure(async () => {
       const value = await engine.retrieve(
@@ -285,7 +313,7 @@ async function benchmarkStoreAndEngine(
           maxMatches: 5,
           maxChars: 4_000,
         },
-        sessionID,
+        engineSessionID,
       );
       if (!value.found || !value.output.includes("benchmark needle")) {
         throw new Error(`${backend}/${payload.label} partial retrieve missed its query`);
@@ -347,7 +375,7 @@ async function benchmarkPluginHook(
       await hook(
         {
           tool: "Bash",
-          sessionID: `perf-hook-${backend}-${payload.label}`,
+          sessionID: `perf-hook-${backend}-${payload.label}-${iteration}`,
           callID: `hook-${iteration}`,
           args: { command: "rg target", query: QUERY },
         },
@@ -455,6 +483,17 @@ export function assertP0HookLatency(
   return p0;
 }
 
+export function assertTokenizerPerformanceReported(
+  results: PerformanceResultRow[],
+): void {
+  if (!results.some((result) => result.operation === "token.counter(cold)")) {
+    throw new Error("missing cold token-counter performance result");
+  }
+  if (!results.some((result) => result.operation === "token.counter(hot)")) {
+    throw new Error("missing hot token-counter performance result");
+  }
+}
+
 function milliseconds(value: number): string {
   return value.toFixed(3);
 }
@@ -464,6 +503,7 @@ async function main(): Promise<void> {
   const results: PerformanceResultRow[] = [];
 
   for (const payload of payloads) {
+    results.push(...(await benchmarkTokenCounter(payload)));
     results.push(await benchmarkRouter(payload));
   }
   for (const backend of ["memory", "bun-sqlite"] as const) {
@@ -494,6 +534,7 @@ async function main(): Promise<void> {
   }
 
   const p0 = assertP0HookLatency(results);
+  assertTokenizerPerformanceReported(results);
   console.log(
     `P0 gate passed: memory 10KiB plugin.tool.execute.after p95=${milliseconds(p0.distribution.p95)}ms < ${P0_HOOK_MAX_P95_MS}ms`,
   );

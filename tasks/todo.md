@@ -17,7 +17,7 @@
 - [x] Add bounded session intent capture and cleanup.
 - [x] Combine session intent and safe scalar tool arguments for relevance.
 - [x] Prove intent and queries never enter telemetry/debug output.
-- [ ] Checkpoint 2: full gates plus cold/hot tokenizer performance.
+- [x] Checkpoint 2: full gates plus cold/hot tokenizer performance.
 
 ## Compression Coverage
 

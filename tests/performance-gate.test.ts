@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   assertP0HookLatency,
+  assertTokenizerPerformanceReported,
   type PerformanceResultRow,
 } from "../benchmarks/performance.js";
 
@@ -24,5 +25,27 @@ describe("performance release gate", () => {
 
   it("fails closed when the P0 hook result is missing", () => {
     expect(() => assertP0HookLatency([])).toThrow(/missing P0/i);
+  });
+
+  it("requires separate cold and hot token-counter rows", () => {
+    const base = hookResult(10);
+    const cold: PerformanceResultRow = {
+      ...base,
+      backend: "tokenizer",
+      operation: "token.counter(cold)",
+    };
+    const hot: PerformanceResultRow = {
+      ...base,
+      backend: "tokenizer",
+      operation: "token.counter(hot)",
+    };
+
+    expect(() => assertTokenizerPerformanceReported([cold, hot])).not.toThrow();
+    expect(() => assertTokenizerPerformanceReported([cold])).toThrow(
+      /hot token-counter/i,
+    );
+    expect(() => assertTokenizerPerformanceReported([hot])).toThrow(
+      /cold token-counter/i,
+    );
   });
 });
