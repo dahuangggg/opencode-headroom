@@ -20,6 +20,16 @@ a proxy.
 The implementation follows Headroom's routing, compression, and CCR concepts,
 but does not run the Headroom proxy or require Headroom's Python/Rust runtime.
 
+Native code compression currently targets Python and TypeScript/JavaScript
+(including JSX/TSX). It parses the whole output into a Lezer syntax tree and
+only folds routine function bodies longer than five non-empty lines. Imports,
+decorators, declarations, classes, signatures, types, and Python docstring
+summaries remain visible. Functions containing query terms or error/security
+signals remain complete. Both the original and the marked candidate must parse
+without syntax errors; unsupported, malformed, short, under-saving, or
+over-compressed candidates are returned byte-exact instead. Any accepted fold
+is still backed by the exact original in CCR.
+
 ## Requirements
 
 - OpenCode with native plugin support
@@ -57,7 +67,8 @@ After a tool finishes, the plugin:
    before the type-specific lossy compressor; it keeps the lossless fold as the
    floor when lossy selection cannot improve it;
 6. accepts the candidate only when its structure and protected facts survive
-   and the calibrated counter reports token savings;
+   and the calibrated counter reports token savings; Python and TS/JS code is
+   additionally reparsed after its language-valid retrieval comment is added;
 7. commits the exact original and the chosen retrieve defaults to CCR;
 8. keeps source and plain-text output from `cat`, `head`, `tail`, `sed -n`, and
    equivalent wrapped shell reads byte-exact, while leaving structured data and

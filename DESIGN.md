@@ -141,13 +141,21 @@ The router unwraps supported whole-output envelopes for detection and rendering,
 then classifies JSON, source code, git diffs, search results, logs, tables,
 HTML, or text. Explicit tagged mixed sections are routed independently while
 their framing remains intact. Code compression preserves imports,
-declarations, signatures, types, errors, and query-relevant symbols. Diff
-compression parses files and hunks, preserves Git metadata and two context
-lines around changes, and leaves inputs below 50 lines unchanged. Above the
-private 20-file or 10-hunk ceilings, query matches and error/security priority
-signals rank ahead of routine change density, with error/security taking
-precedence when the ceiling fills; first and last hunks remain
-anchors. Candidates saving less than 20% of lines are rejected. The router
+declarations, signatures, types, errors, and query-relevant symbols. Its
+supported language boundary is Python and TypeScript/JavaScript, including
+JSX/TSX. Pure-JavaScript Lezer parsers validate the original before selection
+and the final output after a language-valid CCR comment is appended. Only
+routine function bodies above five non-empty lines are replaceable; Python
+decorators and the first docstring line remain visible. A function containing
+a query term or error/security signal stays complete. Parse failures, unknown
+languages, fewer than 100 estimated tokens, less than 20% token savings, or a
+candidate retaining less than 5% of the original tokens all fail open to the
+byte-exact input. Diff compression parses files and hunks, preserves Git
+metadata and two context lines around changes, and leaves inputs below 50 lines
+unchanged. Above the private 20-file or 10-hunk ceilings, query matches and
+error/security priority signals rank ahead of routine change density, with
+error/security taking precedence when the ceiling fills; first and last hunks
+remain anchors. Candidates saving less than 20% of lines are rejected. The router
 hard-protects error and security changes while allowing ordinary omitted
 files/hunks to rely on CCR. The exact original string, not the routed view, is
 offered to CCR.

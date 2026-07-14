@@ -6,6 +6,47 @@ import { estimateTokens } from "../src/token.js";
 import { largeJsonArrayFixture, searchFixture } from "./fixtures.js";
 
 describe("native engine", () => {
+  it("stores AST-compressed Python and retrieves the exact original", async () => {
+    const store = new MemoryCCRStore();
+    const engine = new NativeHeadroomCompatibleEngine(store);
+    const original = [
+      "from typing import Final",
+      "",
+      ...Array.from({ length: 16 }, (_, index) => [
+        `def routine_${index}(value: int) -> int:`,
+        '    """Compute a routine value."""',
+        `    stage_0 = value + ${index}`,
+        "    stage_1 = stage_0 + 1",
+        "    stage_2 = stage_1 + 2",
+        "    stage_3 = stage_2 + 3",
+        "    stage_4 = stage_3 + 4",
+        "    stage_5 = stage_4 + 5",
+        "    stage_6 = stage_5 + 6",
+        "    return stage_6",
+        "",
+      ]).flat(),
+      "VERSION: Final = 1",
+    ].join("\n");
+
+    const result = await engine.compress({
+      tool: "Bash",
+      sessionID: "python-session",
+      callID: "python-call",
+      args: { command: "python inspect.py" },
+      output: original,
+      ttlMs: 60_000,
+    });
+
+    expect(result.changed).toBe(true);
+    expect(result.strategy).toBe("code");
+    expect(result.output).toContain("# [Retrieve more: hash=");
+    expect(result.output).toContain("pass  # … 9 lines omitted …");
+    expect(await engine.retrieve(result.hash!, { mode: "full" })).toEqual({
+      found: true,
+      output: original,
+    });
+  });
+
   it("compresses and stores original output", async () => {
     const store = new MemoryCCRStore();
     const engine = new NativeHeadroomCompatibleEngine(store);
