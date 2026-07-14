@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { parser as javascriptParser } from "@lezer/javascript";
+import { parser as pythonParser } from "@lezer/python";
 
 import { compressCode } from "../src/compressors/code.js";
 import { compressByContentType, detectContentType } from "../src/engine/router.js";
@@ -25,14 +26,66 @@ function sourceFixture(): string {
   ].join("\n");
 }
 
-function syntaxErrors(content: string): number {
-  const tree = javascriptParser.configure({ dialect: "ts jsx" }).parse(content);
+function syntaxErrors(content: string, language: "typescript" | "python" = "typescript"): number {
+  const tree = language === "python"
+    ? pythonParser.parse(content)
+    : javascriptParser.configure({ dialect: "ts jsx" }).parse(content);
   const cursor = tree.cursor();
   let errors = 0;
   do {
     if (cursor.type.isError) errors += 1;
   } while (cursor.next());
   return errors;
+}
+
+function longPythonFixture(): string {
+  const routineFunctions = Array.from({ length: 12 }, (_, index) => [
+    "@cache_result",
+    `def routine_helper_${index}(`,
+    "    value: int,",
+    "    multiplier: int,",
+    ") -> int:",
+    '    """Compute a routine value. Additional details are not required."""',
+    `    stage_0 = value + ${index}`,
+    "    stage_1 = stage_0 * multiplier",
+    "    stage_2 = stage_1 + 2",
+    "    stage_3 = stage_2 + 3",
+    "    stage_4 = stage_3 + 4",
+    "    stage_5 = stage_4 + 5",
+    "    stage_6 = stage_5 + 6",
+    "    return stage_6",
+  ].join("\n"));
+  return [
+    "from typing import NewType",
+    "TenantId = NewType('TenantId', str)",
+    "",
+    "async def rotate_credential(",
+    "    tenant_id: TenantId,",
+    ") -> RotationResult:",
+    '    """Rotate credentials safely."""',
+    "    current = await load_credential(tenant_id)",
+    "    checked = await validate_credential(current)",
+    "    rotated = await perform_rotation(checked)",
+    "    persisted = await persist_credential(rotated)",
+    "    if not persisted:",
+    "        raise AuthRotationError('credential rotation failed')",
+    "    return persisted",
+    "",
+    ...routineFunctions,
+  ].join("\n");
+}
+
+function shortPythonFixture(): string {
+  return [
+    "from typing import Final",
+    "",
+    ...Array.from({ length: 50 }, (_, index) => [
+      `def routine_${index}(value: int) -> int:`,
+      `    return value + ${index}`,
+      "",
+    ]).flat(),
+    "VERSION: Final = 1",
+  ].join("\n");
 }
 
 function longTypeScriptFixture(): string {
@@ -167,6 +220,64 @@ describe("code-aware compressor", () => {
       "export function broken( {",
       ...Array.from({ length: 40 }, () => "  value += 1;"),
       "}",
+    ].join("\n");
+
+    expect(compressCode({ content: original, hash, query: "" })).toMatchObject({
+      changed: false,
+      output: original,
+      reason: "invalid_syntax",
+    });
+  });
+
+  it("compresses Python functions while preserving decorators, signatures, docstrings, and raises", () => {
+    const original = longPythonFixture();
+    const result = compressCode({
+      content: original,
+      hash,
+      query: "rotate credential TenantId AuthRotationError",
+    });
+
+    expect(result.changed).toBe(true);
+    expect(result.output).toContain(
+      "async def rotate_credential(\n    tenant_id: TenantId,\n) -> RotationResult:",
+    );
+    expect(result.output).toContain("raise AuthRotationError");
+    expect(result.output).toContain(
+      "@cache_result\ndef routine_helper_5(\n    value: int,\n    multiplier: int,\n) -> int:",
+    );
+    expect(result.output).toContain('    "Compute a routine value. Additional details are not required."');
+    expect(result.output).toContain("    pass  # … 9 lines omitted …");
+    expect(result.output).not.toContain("stage_5 = stage_4 + 5");
+    expect(result.output).toContain("# [Retrieve more: hash=");
+    expect(syntaxErrors(result.output, "python")).toBe(0);
+  });
+
+  it("routes detected Python through the code strategy", () => {
+    const original = longPythonFixture();
+    const result = compressByContentType({
+      content: original,
+      hash,
+      query: "rotate credential TenantId AuthRotationError",
+    });
+
+    expect(detectContentType(original).kind).toBe("code");
+    expect(result.changed).toBe(true);
+    expect(result.strategy).toBe("code");
+  });
+
+  it("keeps short Python function bodies byte-exact", () => {
+    const original = shortPythonFixture();
+    expect(compressCode({ content: original, hash, query: "" })).toMatchObject({
+      changed: false,
+      output: original,
+    });
+  });
+
+  it("returns malformed Python unchanged", () => {
+    const original = [
+      "def broken(value: int) -> int:",
+      "return value",
+      ...Array.from({ length: 40 }, () => "    value += 1"),
     ].join("\n");
 
     expect(compressCode({ content: original, hash, query: "" })).toMatchObject({

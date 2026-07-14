@@ -1,4 +1,5 @@
 import { parser as javascriptParser } from "@lezer/javascript";
+import { parser as pythonParser } from "@lezer/python";
 import type { SyntaxNode, Tree } from "@lezer/common";
 
 export type ParsedCodeLanguage = "typescript" | "python";
@@ -20,6 +21,7 @@ export interface AstCompressionResult {
 }
 
 const TYPESCRIPT_PARSER = javascriptParser.configure({ dialect: "ts jsx" });
+const PYTHON_PARSER = pythonParser;
 const JAVASCRIPT_FUNCTION_NODES = new Set([
   "FunctionDeclaration",
   "FunctionExpression",
@@ -32,6 +34,8 @@ const ERROR_RE =
   /\b(?:throw|raise|panic|fatal|critical|error|exception|failed|security)\b/i;
 const JAVASCRIPT_SIGNAL_RE =
   /\b(?:function|interface|namespace|enum|implements|extends)\b|=>|^\s*(?:import|export|class|type|const|let|var)\b/m;
+const PYTHON_SIGNAL_RE =
+  /^\s*(?:async\s+)?def\b|^\s*class\s+[A-Za-z_]\w*[^\n]*:\s*(?:#.*)?$|^\s*from\s+\S+\s+import\b/m;
 
 function queryWords(query: string): string[] {
   return query
@@ -99,6 +103,80 @@ function collectJavascriptReplacements(
   }
 }
 
+function indentationAt(content: string, position: number): string {
+  const lineStart = content.lastIndexOf("\n", Math.max(0, position - 1)) + 1;
+  return /^[ \t]*/.exec(content.slice(lineStart, position))?.[0] ?? "";
+}
+
+function pythonDocstringFirstLine(
+  content: string,
+  body: SyntaxNode,
+): string | undefined {
+  const statement = body.getChild("ExpressionStatement");
+  const stringNode = statement?.getChild("String");
+  if (!statement || !stringNode) {
+    return undefined;
+  }
+  const before = content.slice(body.from + 1, statement.from);
+  if (before.trim()) {
+    return undefined;
+  }
+  const literal = content.slice(stringNode.from, stringNode.to);
+  const match = /^(?:[rubf]*)('''|"""|'|")([\s\S]*)\1$/i.exec(literal);
+  const firstLine = match?.[2]
+    ?.split(/\r?\n/)
+    .map((line) => line.trim())
+    .find(Boolean);
+  return firstLine ? JSON.stringify(firstLine) : undefined;
+}
+
+function pythonBodyReplacement(
+  content: string,
+  node: SyntaxNode,
+  body: SyntaxNode,
+  omittedLines: number,
+): string {
+  const bodyText = content.slice(body.from, body.to);
+  const detectedIndent = /\r?\n([ \t]+)\S/.exec(bodyText)?.[1];
+  const indent = detectedIndent ?? `${indentationAt(content, node.from)}    `;
+  const docstring = pythonDocstringFirstLine(content, body);
+  return [
+    ":",
+    ...(docstring ? [`${indent}${docstring}`] : []),
+    `${indent}pass  # … ${omittedLines} lines omitted …`,
+  ].join("\n");
+}
+
+function collectPythonReplacements(
+  content: string,
+  node: SyntaxNode,
+  words: string[],
+  replacements: CodeBodyReplacement[],
+): void {
+  if (node.name === "FunctionDefinition") {
+    const body = node.getChild("Body");
+    if (body) {
+      if (isRequiredFunction(content, node, words)) {
+        return;
+      }
+      const omittedLines = significantBodyLines(content, body);
+      if (omittedLines > 5) {
+        replacements.push({
+          from: body.from,
+          to: body.to,
+          text: pythonBodyReplacement(content, node, body, omittedLines),
+          omittedLines,
+        });
+        return;
+      }
+    }
+  }
+
+  for (let child = node.firstChild; child; child = child.nextSibling) {
+    collectPythonReplacements(content, child, words, replacements);
+  }
+}
+
 function applyReplacements(
   content: string,
   replacements: CodeBodyReplacement[],
@@ -117,16 +195,83 @@ export function isValidCodeSyntax(
   content: string,
   language: ParsedCodeLanguage,
 ): boolean {
-  if (language !== "typescript") {
-    return false;
+  const tree =
+    language === "python"
+      ? PYTHON_PARSER.parse(content)
+      : TYPESCRIPT_PARSER.parse(content);
+  return syntaxErrorCount(tree) === 0;
+}
+
+function compressParsedTree(
+  content: string,
+  query: string,
+  language: ParsedCodeLanguage,
+  tree: Tree,
+): AstCompressionResult {
+  if (syntaxErrorCount(tree) > 0) {
+    return {
+      changed: false,
+      output: content,
+      language,
+      reason: "invalid_syntax",
+      compressedBodies: 0,
+      omittedLines: 0,
+    };
   }
-  return syntaxErrorCount(TYPESCRIPT_PARSER.parse(content)) === 0;
+
+  const replacements: CodeBodyReplacement[] = [];
+  const words = queryWords(query);
+  if (language === "python") {
+    collectPythonReplacements(content, tree.topNode, words, replacements);
+  } else {
+    collectJavascriptReplacements(content, tree.topNode, words, replacements);
+  }
+  if (replacements.length === 0) {
+    return {
+      changed: false,
+      output: content,
+      language,
+      reason: "nothing_to_compress",
+      compressedBodies: 0,
+      omittedLines: 0,
+    };
+  }
+
+  const output = applyReplacements(content, replacements);
+  if (!isValidCodeSyntax(output, language)) {
+    return {
+      changed: false,
+      output: content,
+      language,
+      reason: "invalid_syntax",
+      compressedBodies: 0,
+      omittedLines: 0,
+    };
+  }
+  return {
+    changed: true,
+    output,
+    language,
+    compressedBodies: replacements.length,
+    omittedLines: replacements.reduce(
+      (sum, replacement) => sum + replacement.omittedLines,
+      0,
+    ),
+  };
 }
 
 export function compressCodeAst(
   content: string,
   query: string,
 ): AstCompressionResult {
+  if (PYTHON_SIGNAL_RE.test(content)) {
+    return compressParsedTree(
+      content,
+      query,
+      "python",
+      PYTHON_PARSER.parse(content),
+    );
+  }
   if (!JAVASCRIPT_SIGNAL_RE.test(content)) {
     return {
       changed: false,
@@ -136,56 +281,10 @@ export function compressCodeAst(
       omittedLines: 0,
     };
   }
-
-  const tree = TYPESCRIPT_PARSER.parse(content);
-  if (syntaxErrorCount(tree) > 0) {
-    return {
-      changed: false,
-      output: content,
-      language: "typescript",
-      reason: "invalid_syntax",
-      compressedBodies: 0,
-      omittedLines: 0,
-    };
-  }
-
-  const replacements: CodeBodyReplacement[] = [];
-  collectJavascriptReplacements(
+  return compressParsedTree(
     content,
-    tree.topNode,
-    queryWords(query),
-    replacements,
+    query,
+    "typescript",
+    TYPESCRIPT_PARSER.parse(content),
   );
-  if (replacements.length === 0) {
-    return {
-      changed: false,
-      output: content,
-      language: "typescript",
-      reason: "nothing_to_compress",
-      compressedBodies: 0,
-      omittedLines: 0,
-    };
-  }
-
-  const output = applyReplacements(content, replacements);
-  if (!isValidCodeSyntax(output, "typescript")) {
-    return {
-      changed: false,
-      output: content,
-      language: "typescript",
-      reason: "invalid_syntax",
-      compressedBodies: 0,
-      omittedLines: 0,
-    };
-  }
-  return {
-    changed: true,
-    output,
-    language: "typescript",
-    compressedBodies: replacements.length,
-    omittedLines: replacements.reduce(
-      (sum, replacement) => sum + replacement.omittedLines,
-      0,
-    ),
-  };
 }
