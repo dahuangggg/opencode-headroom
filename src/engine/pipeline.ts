@@ -83,6 +83,22 @@ export function extractProtectedFacts(
       (line, index) => index < 2 || PROTECTED_LINE_RE.test(line),
     );
   }
+  if (kind === "html") {
+    const facts: string[] = [];
+    const title = /<title\b[^>]*>([\s\S]*?)<\/title>/i.exec(content)?.[1]
+      ?.replace(/<[^>]+>/g, " ")
+      .replace(/\s+/g, " ")
+      .trim();
+    if (title) facts.push(title);
+    for (const match of content.matchAll(/href\s*=\s*["']([^"']+)["']/gi)) {
+      if (match[1]) facts.push(match[1]);
+    }
+    for (const match of content.matchAll(/>([^<>]+)</g)) {
+      const text = match[1]?.replace(/\s+/g, " ").trim();
+      if (text && PROTECTED_LINE_RE.test(text)) facts.push(text);
+    }
+    return [...new Set(facts)];
+  }
   return content
     .split(/\r?\n/)
     .map((line) => line.trim())
@@ -105,6 +121,7 @@ export function gateCompressionCandidate(input: {
   original: string;
   candidate: string;
   kind: ContentKind;
+  checkProtectedFacts?: boolean;
 }): CandidateGateResult {
   const originalTokens = estimateTokens(input.original);
   const candidateTokens = estimateTokens(input.candidate);
@@ -125,9 +142,10 @@ export function gateCompressionCandidate(input: {
     };
   }
 
-  const missingFacts = extractProtectedFacts(input.original, input.kind).filter(
-    (fact) => !input.candidate.includes(fact),
-  );
+  const missingFacts = (input.checkProtectedFacts === false
+    ? []
+    : extractProtectedFacts(input.original, input.kind)
+  ).filter((fact) => !input.candidate.includes(fact));
   if (missingFacts.length > 0) {
     return {
       accepted: false,

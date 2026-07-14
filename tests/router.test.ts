@@ -240,6 +240,37 @@ describe("content router detection", () => {
     expect(result.reason).toBe("mixed_passthrough");
   });
 
+  it("routes table and HTML strategies inside explicit mixed sections", () => {
+    const table = [
+      "| tenant | status |",
+      "| --- | --- |",
+      ...Array.from({ length: 40 }, (_, index) =>
+        index === 30 ? "| critical | ERROR |" : `| tenant-${index} | ok |`,
+      ),
+    ].join("\n");
+    const html = [
+      "<html><head><title>Runbook</title></head><body><main>",
+      "<p>Security error requires rotation.</p>",
+      ...Array.from({ length: 30 }, (_, index) => `<p>Routine ${index}</p>`),
+      "</main></body></html>",
+    ].join("\n");
+    const result = compressByContentType({
+      content: `<output>\n${table}\n</output>\n<result>\n${html}\n</result>`,
+      hash: "0123456789abcdef01234567",
+      query: "critical rotation",
+    });
+
+    expect(result.changed).toBe(true);
+    expect(result.output).toContain("| critical | ERROR |");
+    expect(result.output).toContain("Security error requires rotation.");
+    expect(result.debug?.router?.metadata.sections).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ kind: "table", changed: true }),
+        expect.objectContaining({ kind: "html", changed: true }),
+      ]),
+    );
+  });
+
   it("does not infer mixed sections from blank-line-separated prose", () => {
     const prose = "first paragraph\n\nsecond paragraph\n\nthird paragraph";
 

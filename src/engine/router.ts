@@ -1,5 +1,6 @@
 import { compressCode } from "../compressors/code.js";
 import { compressDiff } from "../compressors/diff.js";
+import { compressHtml } from "../compressors/html.js";
 import { compressJson } from "../compressors/json.js";
 import { compressLog } from "../compressors/log.js";
 import { compressSearch } from "../compressors/search.js";
@@ -182,6 +183,7 @@ function compressExplicitSections(
     original: input.content,
     candidate: output,
     kind: "text",
+    checkProtectedFacts: false,
   });
   if (!gate.accepted) {
     return {
@@ -249,6 +251,9 @@ function detectPayloadType(probe: string): DetectionResult {
   }
 
   const trimmed = probe.trim();
+  if (/<!doctype\s+html\b|<html\b|<main\b|<article\b/i.test(trimmed)) {
+    return { kind: "html", confidence: 0.98, metadata: {} };
+  }
   if (trimmed.startsWith("[") || trimmed.startsWith("{")) {
     try {
       JSON.parse(trimmed);
@@ -374,6 +379,9 @@ export function compressByContentType(input: CompressorInput): CompressorResult 
     return attachRouterDebug(
       compressTabular({ ...input, content: routed.payload }),
     );
+  }
+  if (detection.kind === "html") {
+    return attachRouterDebug(compressHtml({ ...input, content: routed.payload }));
   }
   return attachRouterDebug(compressText({ ...input, content: routed.payload }));
 }

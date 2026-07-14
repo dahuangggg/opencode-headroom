@@ -25,8 +25,8 @@
 - [x] Add code-aware compression.
 - [x] Add diff compression.
 - [x] Add tabular compression.
-- [ ] Add HTML extraction/compression.
-- [ ] Route new strategies inside explicit mixed sections.
+- [x] Add HTML extraction/compression.
+- [x] Route new strategies inside explicit mixed sections.
 - [ ] Checkpoint 3: every content type meets recall and parity thresholds.
 
 ## Multi-turn and Delivery

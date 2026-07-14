@@ -5,7 +5,8 @@ export type ContentKind =
   | "text"
   | "code"
   | "diff"
-  | "table";
+  | "table"
+  | "html";
 
 export interface DetectionResult {
   kind: ContentKind;
