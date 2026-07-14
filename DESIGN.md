@@ -81,7 +81,7 @@ Patterns are anchored, case-insensitive globs with `*` and `?`. Explicit rules
 can override compatibility, `ctx_*`, and exact-content defaults, but cannot
 override `headroom_*` recursion protection. Lower-level invariants, including
 output-path containment, marker detection, maximum size, content-level
-code/diff passthrough, canonical CCR keys, and fail-open output handling, are
+code/diff safety gates, canonical CCR keys, and fail-open output handling, are
 not policy decisions.
 
 A rule has a stable ID, selector list, and `preserve` or `compress` action. A
