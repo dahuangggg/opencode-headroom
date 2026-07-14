@@ -90,7 +90,7 @@ export function compressTabular(input: CompressorInput): CompressorResult {
     required.add(index);
   }
   const rankedFiller = rankInformationItems(table.rows, required);
-  const maxRows = input.profile?.json.maxItems ?? 12;
+  const maxRows = input.profile?.table?.maxRows ?? 12;
   const availableFillerSlots = Math.max(0, maxRows - required.size);
   const adaptiveBias = input.profile?.adaptive?.bias ?? 1;
   const adaptive = computeOptimalK(
