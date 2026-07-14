@@ -4,6 +4,7 @@ import {
   compressSearch,
   parseSearchResults,
 } from "../src/compressors/search.js";
+import { compressionProfileForStrength } from "../src/compressors/profile.js";
 import { createContentHash } from "../src/store/ccr.js";
 import { searchFixture } from "./fixtures.js";
 
@@ -14,6 +15,18 @@ describe("search compressor", () => {
     expect(parsed).toEqual([
       { file: "src/a.ts", lineNumber: 10, content: "match" },
       { file: "src/a.ts", lineNumber: 11, content: "context" },
+    ]);
+  });
+
+  it("parses ripgrep heading-form rows", () => {
+    const parsed = parseSearchResults(
+      "src/a.ts\n10:match\n11:more context\nsrc/b.ts\n4:error",
+    );
+
+    expect(parsed).toEqual([
+      { file: "src/a.ts", lineNumber: 10, content: "match" },
+      { file: "src/a.ts", lineNumber: 11, content: "more context" },
+      { file: "src/b.ts", lineNumber: 4, content: "error" },
     ]);
   });
 
@@ -28,7 +41,7 @@ describe("search compressor", () => {
 
     expect(result.changed).toBe(true);
     expect(result.output).toContain("src/auth.ts:35:ERROR auth token rejected");
-    expect(result.output).toContain("[... and");
+    expect(result.output).toContain("[omitted:");
     expect(result.output).toContain(`[Retrieve more: hash=${hash}]`);
     expect(result.output.length).toBeLessThan(original.length * 0.3);
   });
@@ -128,12 +141,12 @@ describe("search compressor", () => {
       query: "",
     });
     const summarizedOmissions = [...result.output.matchAll(
-      /\[\.\.\. and (\d+) more matches in [^\]]+\]/g,
+      /(?:\[omitted:\s*|;\s*)(\d+)@[^;\]]+/g,
     )].reduce((total, match) => total + Number(match[1]), 0);
 
     expect(result.changed).toBe(true);
     expect(result.output).toContain(
-      "[... and 2 more matches in src/file16.ts]",
+      "2@src/file16.ts",
     );
     expect(summarizedOmissions).toBe(
       result.debug?.compressor?.dropped.matches,
@@ -158,5 +171,69 @@ describe("search compressor", () => {
     expect(result.output).toBe(original);
     expect(result.debug?.compressor?.kept.requiredMatches).toBe(20);
     expect(result.debug?.compressor?.dropped.matches).toBe(0);
+  });
+
+  it("uses information saturation to keep less repetitive filler", () => {
+    const buildResults = (diverse: boolean) =>
+      Array.from({ length: 12 }, (_, fileIndex) =>
+        Array.from({ length: 8 }, (_, matchIndex) => {
+          const detail = diverse
+            ? `symbol-${fileIndex * 101 + matchIndex * 17} changed package-${fileIndex}-${matchIndex}`
+            : "generated cache entry has the same routine status";
+          return `src/file${fileIndex + 1}.ts:${matchIndex + 1}:${detail}`;
+        }),
+      ).flat().join("\n");
+    const compress = (content: string) =>
+      compressSearch({
+        content,
+        hash: createContentHash(content),
+        query: "",
+      });
+    const repeated = compress(buildResults(false));
+    const diverse = compress(buildResults(true));
+    const repeatedAdaptive = repeated.debug?.compressor?.kept.adaptive as
+      | { k: number; uniqueGroups: number }
+      | undefined;
+    const diverseAdaptive = diverse.debug?.compressor?.kept.adaptive as
+      | { k: number; uniqueGroups: number }
+      | undefined;
+
+    expect(repeatedAdaptive).toBeDefined();
+    expect(diverseAdaptive).toBeDefined();
+    expect(repeatedAdaptive?.k).toBeLessThan(diverseAdaptive?.k ?? 0);
+    expect(repeatedAdaptive?.uniqueGroups).toBeLessThan(
+      diverseAdaptive?.uniqueGroups ?? 0,
+    );
+    expect(repeated.debug?.compressor?.kept.fillerMatches).toBeLessThan(
+      diverse.debug?.compressor?.kept.fillerMatches as number,
+    );
+  });
+
+  it("maps compression strength to a monotonic adaptive search budget", () => {
+    const original = Array.from({ length: 16 }, (_, fileIndex) =>
+      Array.from(
+        { length: 8 },
+        (_, matchIndex) =>
+          `src/file${fileIndex + 1}.ts:${matchIndex + 1}:symbol-${fileIndex * 101 + matchIndex * 17} changed package-${fileIndex}-${matchIndex}`,
+      ),
+    ).flat().join("\n");
+    const fillerCount = (
+      strength: "conservative" | "balanced" | "aggressive",
+    ) => {
+      const result = compressSearch({
+        content: original,
+        hash: createContentHash(original),
+        query: "",
+        profile: compressionProfileForStrength(strength),
+      });
+      return result.debug?.compressor?.kept.fillerMatches as number;
+    };
+
+    expect(fillerCount("conservative")).toBeGreaterThanOrEqual(
+      fillerCount("balanced"),
+    );
+    expect(fillerCount("balanced")).toBeGreaterThanOrEqual(
+      fillerCount("aggressive"),
+    );
   });
 });

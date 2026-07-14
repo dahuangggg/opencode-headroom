@@ -11,8 +11,26 @@ bounded retrieval defaults, bounded storage, session lifecycle cleanup, and
 local cost telemetry. The plugin never learns preferences or changes policy
 from observed behavior.
 
+The current native engine also adds effect-parity coverage for code, diffs,
+tables, HTML, and explicit mixed output; calibrated token accounting; bounded
+session intent; exact shell-read protection; reversible lossless-first folds;
+stale/superseded Read lifecycle management; and cross-turn span folding. These
+deepen compression behavior without adding a proxy. Bounded process-local
+decision reuse and per-strategy fail-open circuit breaking keep repeated work
+cheap and isolate a failing compressor.
+
 The implementation follows Headroom's routing, compression, and CCR concepts,
 but does not run the Headroom proxy or require Headroom's Python/Rust runtime.
+
+Native code compression currently targets Python and TypeScript/JavaScript
+(including JSX/TSX). It parses the whole output into a Lezer syntax tree and
+only folds routine function bodies longer than five non-empty lines. Imports,
+decorators, declarations, classes, signatures, types, and Python docstring
+summaries remain visible. Functions containing query terms or error/security
+signals remain complete. Both the original and the marked candidate must parse
+without syntax errors; unsupported, malformed, short, under-saving, or
+over-compressed candidates are returned byte-exact instead. Any accepted fold
+is still backed by the exact original in CCR.
 
 ## Requirements
 
@@ -45,11 +63,36 @@ After a tool finishes, the plugin:
    output;
 2. preserves protected tools or rejects untrusted output paths;
 3. skips empty, small, already-marked, and oversized output;
-4. detects JSON, source code, search output, logs, diffs, or plain text;
-5. applies the selected compression strength and keeps the result only when it
-   saves estimated tokens;
-6. commits the exact original and the chosen retrieve defaults to CCR;
-7. records local counters and latency without recording output, arguments, path
+4. under the default `coding` profile, keeps short strong-error output and the
+   just-completed Python/TS/JS working set byte-exact;
+5. detects JSON, source code, search output, logs, diffs, tables, HTML,
+   explicit mixed sections, or plain text;
+6. under the default `coding` profile, applies a reversible type-native fold
+   before the type-specific lossy compressor; it keeps the lossless fold as the
+   floor when lossy selection cannot improve it;
+7. accepts the candidate only when its structure and protected facts survive
+   and the calibrated counter reports token savings; Python and TS/JS code is
+   additionally reparsed after its language-valid retrieval comment is added;
+8. commits the exact original and the chosen retrieve defaults to CCR;
+9. keeps source and plain-text output from `cat`, `head`, `tail`, `sed -n`, and
+   equivalent wrapped shell reads byte-exact, while leaving structured data and
+   regenerable lockfiles eligible for compression;
+10. folds exact or highly similar whole output only when a bounded same-session
+   match exists, while committing another exactly retrievable CCR record;
+11. after repetition matching, reuses only an identical content/query/profile
+   compression or stable skip decision; a positive hit still commits the exact
+   current original to session-scoped CCR;
+12. after three consecutive failures in one detected strategy, bypasses only
+   that strategy byte-exact for a 60-second cooldown; successful execution
+   resets its failure count;
+13. before each model request, freezes completed tool parts observed on an
+   earlier transform and allows Read lifecycle to replace only a newly observed
+   live `Read` of at least 512 UTF-8 bytes when the same live zone proves it
+   stale;
+14. folds repeated contiguous spans only in newly observed completed tool
+   outputs, while frozen outputs remain available as references and constant
+   line-number shifts are supported;
+15. records local counters and latency without recording output, arguments, path
    content, or query text.
 
 The plugin registers:
@@ -60,13 +103,77 @@ The plugin registers:
 Normal hook failures are fail-open: the original tool output remains in place.
 The plugin does not change provider URLs, proxy traffic, or network transports.
 
+Shell-read protection is content-aware. Source code and the plain-text fallback
+remain exact because they may be patched byte-for-byte. Confident JSON, search,
+log, diff, table, and HTML output remains compressible, as do generated
+lockfiles such as `package-lock.json`, `pnpm-lock.yaml`, and `Cargo.lock`.
+
+Cross-turn span folding uses OpenCode's native message-transform hook. The first
+observation of a session is seeded without mutation. On later transforms,
+completed tool-part identities already observed are frozen and only new parts
+can be folded. Frozen outputs remain valid reference targets. Because OpenCode
+reloads the stored raw message history for every request, the lifecycle tracker
+also replays the exact changed representation that was previously sent. This
+keeps the effective provider prefix byte-stable instead of letting a prior
+pointer silently expand back to raw output. Replayed Read-lifecycle markers are
+validated against CCR before any classification or scan-limit exit; if their
+backing entry expired or was evicted, the tracker restores the raw Read instead
+of sending an unretrievable pointer.
+
+Headroom's net-cost frozen-prefix unlock is an opt-in transport policy and is
+off in the reviewed default. This native plugin likewise never unlocks a frozen
+part from guessed cache prices: OpenCode does not expose provider cache usage to
+the transform hook. Live parts continue through the normal token-savings gate.
+
+Read lifecycle management runs before span folding under the `coding` profile.
+It derives `Read`, `Edit`, and `Write` history from completed OpenCode tool
+parts. An old Read becomes stale after a later write to the same normalized
+path, or superseded when a later Read fully covers its original offset/limit.
+By default only stale Reads of at least 512 UTF-8 bytes are replaceable;
+superseded, fresh, smaller, and partially overlapping Reads remain byte-exact.
+Previously observed completed parts and the entire prefix through the latest
+explicit cache-control marker are frozen. Every replacement uses a canonical
+CCR hash, and Store failures leave the original untouched. The pass scans at
+most 10,000 relevant operations per request; larger histories are left entirely
+unchanged instead of being classified from a partial scan. Set `readLifecycle`
+to `false` to disable Read replacement; cache-safe span folding remains enabled.
+
+### Decision reuse and failure isolation
+
+Whole-output repetition remains the first fast path. After that, a process-local
+two-layer decision cache can reuse a deterministic compression result or a
+stable skip decision only when the full content digest, relevance-query digest,
+strength/profile, lossless mode, and trusted original-token input all match.
+The key contains digests rather than raw source or query text. A positive hit
+does not reuse another session's CCR record: it commits the current exact
+original again, and a Store collision causes the marker-bearing candidate to be
+rendered for the newly allocated hash before anything is emitted. Open-circuit
+and exceptional outcomes never enter either decision-cache tier.
+
+The cache has a 30-minute absolute TTL and one global LRU bounded to 512 entries,
+2,000,000 retained compressed UTF-16 code units, and 250,000 code units for one
+result. Skip entries retain only strategy, a bounded reason, and token-count
+metadata; they retain no output. Session deletion clears same-session
+repetition state but deliberately leaves reusable process decisions until TTL,
+eviction, or plugin disposal. Compressed results can still contain sensitive
+snippets, so process memory must be treated as sensitive just like CCR.
+
+The router tracks consecutive exceptions separately for code, diff, JSON,
+search, log, table, HTML, and text. Three failures open only that strategy for
+60 seconds; while open, the exact input is returned and the compressor is not
+called. Any clean execution resets that strategy, and a post-cooldown trial
+either closes or reopens it. Headroom's reviewed reference applies the same
+three-failure/60-second fail-open effect at pipeline scope; the native adapter
+uses finer isolation because its content strategies execute independently.
+
 ## Configuration
 
 | Option | Default | Meaning |
 | --- | --- | --- |
 | `engine` | `"native"` | Compression engine; 0.2 supports only `native`. |
-| `thresholdTokens` | `2000` | Global estimated-token threshold. |
-| `thresholdChars` | `8000` | Global character threshold. Compression is considered when either threshold is reached. |
+| `profile` | `"coding"` | `coding` matches Headroom's low activation thresholds and lossless-first pipeline; `legacy` restores the earlier thresholds, lossless setting, and Read-lifecycle default. |
+| `thresholdTokens` | profile default (`25` for `coding`) | Global estimated-token threshold. An explicit value overrides the profile. |
+| `thresholdChars` | profile default (`25` for `coding`) | Global character threshold. An explicit value overrides the profile; compression is considered when either threshold is reached. |
 | `ttlHours` | `24` | Global CCR retention time. |
 | `storage.kind` | `"auto"` | `auto`, `memory`, or `bun-sqlite`. |
 | `storage.path` | `.headroom/ccr.sqlite` | SQLite path relative to the OpenCode worktree. |
@@ -83,9 +190,48 @@ The plugin does not change provider URLs, proxy traffic, or network transports.
 | `debugLevel` | `"summary"` | `summary` or `trace`. |
 | `debugSink` | `"metadata"` | `metadata`, `file`, or `both`. |
 | `debugPath` | `.headroom/debug.ndjson` | Worktree-relative debug file path. |
+| `readLifecycle` | profile default (`true` for `coding`) | Replace eligible live stale OpenCode Read results of at least 512 UTF-8 bytes before model requests. |
 
 Invalid enums, empty selectors, non-positive limits, and incompatible preserve
 rules fail during plugin initialization.
+
+Use `"profile": "legacy"` to restore the earlier `2000` token / `8000`
+character activation thresholds and disable the lossless-first and Read
+lifecycle stages without changing any tool policies. Explicit thresholds and
+an explicit `readLifecycle` value still override profile defaults.
+
+The lossless-first stage follows Headroom's format-native approach. Consecutive
+identical log/text rows become a counted repeat marker, and grep rows use
+ripgrep heading form so repeated paths are printed once. Homogeneous JSON arrays
+of scalar records use a compact table encoding when it saves at least 30%.
+Line transforms reproduce the exact bytes; JSON tables reproduce every value,
+type, field, and row in order. Each transform is round-trip checked before use,
+and the exact original remains the CCR source of truth. The lossy candidate is
+still validated against the original, not merely against the folded
+intermediate result.
+
+Search, log, JSON-array, and tabular compression use Headroom-style adaptive
+information sizing after priority selection. Repetitive filler reaches its
+information-saturation point sooner, while diverse filler retains more rows.
+The relevance query reserves 300 characters for top-level scalar tool
+arguments, so a long user prompt cannot hide the active path or search pattern.
+Log query matches are required rows and seed the same bounded neighboring
+context used for errors and warnings.
+JSON and table candidates are ranked by normalized information rarity and
+distributed position coverage; semantic and numeric outliers are protected.
+Strength-specific row budgets remain safety ceilings: required rows do not spend
+the adaptive filler budget. When debug output is enabled, the compressor summary
+records the selected `k`, diversity, unique-group count, bias, knee, and zlib
+adjustment without recording the analyzed content or query.
+
+Unified diffs use a parsed file-and-hunk model instead of line filtering. Inputs
+below 50 lines remain exact. Eligible hunks keep two context lines on either
+side of every change, plus pre-diff text, file metadata, rename/mode lines, and
+`No newline` markers. Diffs above 20 files retain error/security files first,
+then query matches, before change-dense routine files; files above 10 hunks use
+the same priority order while keeping the first and last as anchors. The candidate is used only when it
+saves at least 20% of lines. Error and security changes remain hard-protected;
+ordinary omitted files and hunks remain exactly recoverable through CCR.
 
 ## Deterministic tool policy
 
@@ -201,9 +347,21 @@ limit is reached, the oldest active entries are evicted first. SQLite uses
 `secure_delete=ON`, and best-effort owner-only file permissions.
 
 When OpenCode emits `session.deleted`, the plugin deletes that session's CCR
-entries and per-session telemetry. Process-global historical telemetry remains
-until the plugin is disposed. The plugin's `dispose` hook closes the store;
-SQLite close is idempotent.
+entries, latest-user-intent state, repetition fingerprints, per-session
+telemetry, cached Read-lifecycle hash/digest references, and the sent-context
+frontier. Process-global historical telemetry and reusable compression
+decisions remain until the plugin is disposed; decisions are independently
+TTL/LRU bounded and contain no raw skip payload. The plugin's `dispose` hook
+clears bounded session and decision state and closes the store; SQLite close is
+idempotent. Repetition and Read-lifecycle state store
+bounded fingerprints, hashes, and digests. Context lifecycle additionally keeps
+only changed sent representations needed for byte-exact replay, bounded to
+256,000 characters per session across at most 256 sessions; unchanged raw
+output is represented only by digests. Exact CCR recovery bytes remain owned by
+CCR. Sessions with retained changed representations are not evicted; if all
+slots require replay, a new session fails open without mutation. Same-session
+transforms are serialized, deletion waits for in-flight transforms, and dispose
+drains the bounded transform queue before closing CCR.
 
 ### SQLite schema v2
 
@@ -337,9 +495,10 @@ A direct replacement for a custom 0.1 skip list is:
 ### An output was not compressed
 
 It may match a preserve rule, be below both selected thresholds, contain an
-existing CCR marker, exceed `maxOutputChars`, be detected as exact code or a
-diff, or produce no estimated savings. Enable summary debug metadata to see the
-resolved rule, strength, thresholds, and decision reason.
+existing CCR marker, exceed `maxOutputChars`, lack enough safe type-specific
+folding opportunities, fail a protected-fact or structure gate, or produce no
+estimated savings. Enable summary debug metadata to see the resolved rule,
+strength, thresholds, and decision reason.
 
 ### SQLite was not created
 
@@ -367,19 +526,27 @@ bun install
 bun test tests
 bun run typecheck
 npm run build
+bun run bench:quality
 bun run bench:check
 bun run bench:perf
 npm run lint:package
 npm run test:package
+npm audit --omit=dev
 ```
 
-`bun.lock` is the canonical lockfile. `bench:check` is deterministic and does
-not rewrite the tracked cost report; `bench:report` is the explicit report
-writer. `bench:perf` measures fixed-seed router, Store put/get, compression,
-bounded retrieval, complete plugin-hook, SQLite worker-concurrent writes, and
-cold-start p50/p95/max results without writing a report. It blocks only when
-the P0 10 KiB memory-backed `tool.execute.after` p95 is not below 50 ms; the
-larger and SQLite rows remain baselines until enough stable CI history exists.
+`bun.lock` is the canonical lockfile. `bench:quality` enforces the pinned
+Headroom effect-parity corpus. A bounded diff is structurally valid when it
+retains diff/file/hunk framing and changed lines; fixture-specific protected
+facts, rather than every routine file, remain mandatory. `bench:check` is deterministic and does not
+rewrite the tracked cost report; `bench:report` is the explicit report writer.
+`bench:perf` reports calibrated token counting cold/hot paths separately and
+measures fixed-seed router, Store put/get, ordinary non-repetition compression,
+cross-session hot decision-cache reuse, bounded retrieval, complete tool and
+message-transform hooks, SQLite
+worker-concurrent writes, and cold-start p50/p95/max results without writing a
+report. It blocks when either P0 10 KiB memory-backed `tool.execute.after` or
+Read-lifecycle `messages.transform` p95 is not below 50 ms; the larger and
+SQLite rows remain reviewed baselines.
 `lint:package` checks npm-normalized manifest metadata, self-dependencies,
 public export paths, packed export targets, and conflict-copy files. The
 package smoke removes `dist`, packs from a clean state, validates

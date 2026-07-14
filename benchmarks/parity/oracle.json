@@ -1,0 +1,178 @@
+{
+  "schemaVersion": 1,
+  "generatedAt": "2026-07-14T03:16:35.522836+00:00",
+  "reference": {
+    "package": "headroom-ai",
+    "version": "0.31.0",
+    "commit": "52a024d28cff7808659240b3f4c5ceb4fa11e0e8",
+    "profile": "coding",
+    "routerConfig": {
+      "enable_code_aware": true,
+      "enable_cross_turn_dedup": true,
+      "lossless_then_lossy": true,
+      "min_chars_for_block_compression": 25,
+      "smart_crusher_max_items_after_crush": 15,
+      "smart_crusher_with_compaction": true,
+      "force_kompress_all": false,
+      "lossless": false,
+      "ccr_inject_marker": true
+    },
+    "contentRouterSha256": "608722c25ee2326e1259597dd6d78463a0c79a7470232a92263afa9c1b9deb08"
+  },
+  "fixtures": [
+    {
+      "id": "json-priority-row",
+      "fixtureSha256": "85abd5b44ed1bfb2da38f33fc7bd08f7d95d95fe44fb1555a3fe3c3cb8666d3d",
+      "strategy": "smart_crusher",
+      "originalTokens": 1925,
+      "outputTokens": 324,
+      "outputSha256": "6f2e3e5fc5fb79ec4f70fc6fe37e16dbf9dac48b497d238b6ca36cfd09e9d34e",
+      "structureValid": true,
+      "protectedFacts": [
+        "ERROR auth refresh rejected for tenant-critical"
+      ],
+      "retainedFacts": [
+        "ERROR auth refresh rejected for tenant-critical"
+      ]
+    },
+    {
+      "id": "search-relevant-tail",
+      "fixtureSha256": "54ba0d2e2c7fc99cd57d09015ddafe6622c3d2a5dc1c0080b3e181f873b041b9",
+      "strategy": "search",
+      "originalTokens": 543,
+      "outputTokens": 140,
+      "outputSha256": "730e19fd66a856c21cb59d8a9ef480e370fa4b9329e247d7ca61939e3595e046",
+      "structureValid": true,
+      "protectedFacts": [
+        "src/security/session.ts:417:ERROR rotateCredential rejected"
+      ],
+      "retainedFacts": [
+        "src/security/session.ts:417:ERROR rotateCredential rejected"
+      ]
+    },
+    {
+      "id": "log-error-stack",
+      "fixtureSha256": "a0d71241fa1037b9077a2aeaf968564f49c84e660ca037cd62e01c8d4c1534a6",
+      "strategy": "code_aware",
+      "originalTokens": 780,
+      "outputTokens": 780,
+      "outputSha256": "dcfc0a8654a0ce9973f5ab5d877bad70b314fb83a87de49c027299e0b0be91ce",
+      "structureValid": true,
+      "protectedFacts": [
+        "AuthRotationError: credential rotation failed at auth.ts:93",
+        "File \"auth.py\", line 93"
+      ],
+      "retainedFacts": [
+        "AuthRotationError: credential rotation failed at auth.ts:93",
+        "File \"auth.py\", line 93"
+      ]
+    },
+    {
+      "id": "text-security-decision",
+      "fixtureSha256": "60f5482c318b3ac50b23c404435ca90741d241244f2c752f6f7b9929d3a9d292",
+      "strategy": "text",
+      "originalTokens": 1320,
+      "outputTokens": 1320,
+      "outputSha256": "06e54b67c9536dbe2b6234e586751724ab267f2048c29f854fad900ed73cd0aa",
+      "structureValid": true,
+      "protectedFacts": [
+        "SECURITY DECISION HR-204: rotate the release credential before publish.",
+        "Action: block publishing until HR-204 is resolved."
+      ],
+      "retainedFacts": [
+        "SECURITY DECISION HR-204: rotate the release credential before publish.",
+        "Action: block publishing until HR-204 is resolved."
+      ]
+    },
+    {
+      "id": "code-signature-and-type",
+      "fixtureSha256": "13c4a1b6829bde0696137a8b4d8bfb860da849c47e38661653f108bbfb84467c",
+      "strategy": "code_aware",
+      "originalTokens": 1325,
+      "outputTokens": 1325,
+      "outputSha256": "e0d15d2cff5cf0260d0d5b4041777cb170330149aa05edcbcc321441cafa2816",
+      "structureValid": true,
+      "protectedFacts": [
+        "export async function rotateCredential(tenantId: TenantId): Promise<RotationResult>",
+        "export type TenantId = string & { readonly tenant: unique symbol };",
+        "throw new AuthRotationError(\"credential rotation failed\");"
+      ],
+      "retainedFacts": [
+        "export async function rotateCredential(tenantId: TenantId): Promise<RotationResult>",
+        "export type TenantId = string & { readonly tenant: unique symbol };",
+        "throw new AuthRotationError(\"credential rotation failed\");"
+      ]
+    },
+    {
+      "id": "diff-auth-change",
+      "fixtureSha256": "4fa52405c23dc5bdaef982d4f3209fa3c287dab6611563224ad27848fa7ea71c",
+      "strategy": "diff",
+      "originalTokens": 1937,
+      "outputTokens": 1934,
+      "outputSha256": "03d4c490290710395a14617dd477f8938978d6635dc9f7078623b00af3557f72",
+      "structureValid": true,
+      "protectedFacts": [
+        "diff --git a/src/auth.ts b/src/auth.ts",
+        "@@ -87,7 +87,10 @@ export async function rotateCredential(tenantId: TenantId) {",
+        "+  throw new AuthRotationError(\"credential rotation failed\");"
+      ],
+      "retainedFacts": [
+        "diff --git a/src/auth.ts b/src/auth.ts",
+        "@@ -87,7 +87,10 @@ export async function rotateCredential(tenantId: TenantId) {",
+        "+  throw new AuthRotationError(\"credential rotation failed\");"
+      ]
+    },
+    {
+      "id": "table-abnormal-row",
+      "fixtureSha256": "fa9afcf96411445d5cf0fa467b227444c32240e4aeca8ab80fd4da2f1c887290",
+      "strategy": "tabular",
+      "originalTokens": 1274,
+      "outputTokens": 1,
+      "outputSha256": "977729766193fb78d30aef96859b94543668a50938c7fa1f40498d90586bff0a",
+      "structureValid": false,
+      "protectedFacts": [
+        "| tenant | status | action |",
+        "| tenant-critical | ERROR | rotate-before-publish |"
+      ],
+      "retainedFacts": []
+    },
+    {
+      "id": "html-main-security-content",
+      "fixtureSha256": "d320eb6ee067e474189953393969e8b40600f1252f9b955a88ed57c83914d5bb",
+      "strategy": "html",
+      "originalTokens": 749,
+      "outputTokens": 749,
+      "outputSha256": "66391ecab65af9a8585db5367d536467e951086eae9294033044061596a589fb",
+      "structureValid": true,
+      "protectedFacts": [
+        "Security Runbook HR-204",
+        "Security incident HR-204 requires credential rotation before publish.",
+        "tenant-critical",
+        "/runbooks/hr-204"
+      ],
+      "retainedFacts": [
+        "Security Runbook HR-204",
+        "Security incident HR-204 requires credential rotation before publish.",
+        "tenant-critical",
+        "/runbooks/hr-204"
+      ]
+    },
+    {
+      "id": "mixed-stdout-stderr",
+      "fixtureSha256": "2b7b8367165d9b10614031cf4369b12a4517ccfc71958da670e47386a346263b",
+      "strategy": "log",
+      "originalTokens": 563,
+      "outputTokens": 31,
+      "outputSha256": "cb6d2f4f6dfeb8375d4d8a31da270de1ad7ac6a40d891d349fa7d568896fcafe",
+      "structureValid": false,
+      "protectedFacts": [
+        "ERROR mixed-output authorization rejected at worker.ts:71",
+        "Traceback: worker.ts:71"
+      ],
+      "retainedFacts": [
+        "ERROR mixed-output authorization rejected at worker.ts:71",
+        "Traceback: worker.ts:71"
+      ]
+    }
+  ]
+}

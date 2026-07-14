@@ -43,23 +43,50 @@ describe("local telemetry aggregator", () => {
       estimatedTokensSaved: 0,
       latencyMs: 7,
     });
+    telemetry.recordCompression({
+      sessionID: "session-1",
+      outcome: "skipped",
+      reason: "strategy_circuit_open",
+      estimatedTokensSaved: 0,
+      latencyMs: 1,
+    });
 
     expect(telemetry.snapshot()).toMatchObject({
       compressed: 1,
-      skipped: 1,
+      skipped: 2,
       error: 1,
       reasonDistribution: {
         below_threshold: 1,
         compressed: 1,
         hook_error: 1,
+        strategy_circuit_open: 1,
       },
       grossEstimatedSavings: 120,
       estimatedNetSavings: 120,
       latency: {
-        count: 3,
-        totalMs: 15,
+        count: 4,
+        totalMs: 16,
         maxMs: 7,
       },
+    });
+  });
+
+  it("accepts stable candidate-rejection reasons", () => {
+    const telemetry = new LocalTelemetryAggregator({
+      requestedAdapter: "memory",
+      activeAdapter: "memory",
+    });
+
+    telemetry.recordCompression({
+      sessionID: "session-1",
+      outcome: "skipped",
+      reason: "candidate_no_token_savings",
+      estimatedTokensSaved: 0,
+      latencyMs: 1,
+    });
+
+    expect(telemetry.snapshot().reasonDistribution).toEqual({
+      candidate_no_token_savings: 1,
     });
   });
 

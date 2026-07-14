@@ -1,4 +1,5 @@
 import { formatRetrieveMarker } from "../markers.js";
+import { computeOptimalK } from "../engine/adaptive-sizer.js";
 import type { CompressorInput, CompressorResult } from "./types.js";
 
 export interface SearchMatch {
@@ -8,19 +9,40 @@ export interface SearchMatch {
 }
 
 const MATCH_RE = /^(?<file>.+?)(?<sep>[:\-])(?<line>\d+)\k<sep>(?<content>.*)$/;
+const HEADING_MATCH_RE = /^(?<line>\d+):(?<content>.*)$/;
 const SEVERITY_RE =
   /\b(error|fail|failed|fatal|critical|exception|warn|warning|todo|fixme|hack|secret|password|security)\b/i;
 
 export function parseSearchResults(content: string): SearchMatch[] {
   const results: SearchMatch[] = [];
-  for (const line of content.split(/\r?\n/)) {
+  const lines = content.split(/\r?\n/);
+  let heading: string | undefined;
+  for (let index = 0; index < lines.length; index += 1) {
+    const line = lines[index] ?? "";
     const match = MATCH_RE.exec(line);
     const file = match?.groups?.file;
     const lineNumber = match?.groups?.line;
     const matchContent = match?.groups?.content;
     if (!file || !lineNumber || matchContent === undefined) {
+      const headingMatch = heading ? HEADING_MATCH_RE.exec(line) : undefined;
+      const headingLine = headingMatch?.groups?.line;
+      const headingContent = headingMatch?.groups?.content;
+      if (heading && headingLine && headingContent !== undefined) {
+        results.push({
+          file: heading,
+          lineNumber: Number(headingLine),
+          content: headingContent,
+        });
+        continue;
+      }
+      if (line && HEADING_MATCH_RE.test(lines[index + 1] ?? "")) {
+        heading = line;
+        continue;
+      }
+      heading = undefined;
       continue;
     }
+    heading = undefined;
     results.push({
       file,
       lineNumber: Number(lineNumber),
@@ -163,15 +185,22 @@ export function compressSearch(input: CompressorInput): CompressorResult {
         (fileRank.get(b.file) ?? Number.MAX_SAFE_INTEGER) ||
       a.lineNumber - b.lineNumber,
   );
-  for (const match of filler) {
-    if (selected.length >= maxMatches) {
-      break;
-    }
-    const key = `${match.file}:${match.lineNumber}`;
-    if (!selectedKeys.has(key)) {
-      selected.push(match);
-      selectedKeys.add(key);
-    }
+  const eligibleFiller = filler.filter(
+    (match) => !selectedKeys.has(`${match.file}:${match.lineNumber}`),
+  );
+  const availableFillerSlots = Math.max(0, maxMatches - required.size);
+  const adaptiveBias = input.profile?.adaptive?.bias ?? 1;
+  const adaptive = computeOptimalK(
+    eligibleFiller.map((match) => match.content),
+    {
+      bias: adaptiveBias,
+      minK: Math.min(5, availableFillerSlots, eligibleFiller.length),
+      maxK: Math.min(availableFillerSlots, eligibleFiller.length),
+    },
+  );
+  for (const match of eligibleFiller.slice(0, adaptive.k)) {
+    selected.push(match);
+    selectedKeys.add(`${match.file}:${match.lineNumber}`);
   }
 
   selected.sort(
@@ -185,7 +214,7 @@ export function compressSearch(input: CompressorInput): CompressorResult {
   for (const [file, fileMatches] of byFile) {
     const omitted = fileMatches.length - (selectedByFile.get(file) ?? 0);
     if (omitted > 0) {
-      summaries.push(`[... and ${omitted} more matches in ${file}]`);
+      summaries.push(`${omitted}@${file}`);
     }
   }
   const selections = selected.slice(0, 50).map((match) => {
@@ -199,7 +228,7 @@ export function compressSearch(input: CompressorInput): CompressorResult {
   const output = [
     ...selected
       .map((match) => `${match.file}:${match.lineNumber}:${match.content}`),
-    ...summaries,
+    ...(summaries.length ? [`[omitted: ${summaries.join("; ")}]`] : []),
     formatRetrieveMarker(input.hash),
   ].join("\n");
 
@@ -219,6 +248,7 @@ export function compressSearch(input: CompressorInput): CompressorResult {
             requiredMatches: required.size,
             fillerMatches: Math.max(0, selected.length - required.size),
             files: new Set(selected.map((match) => match.file)).size,
+            adaptive: { ...adaptive, bias: adaptiveBias },
           },
           dropped: {
             matches: Math.max(0, matches.length - selected.length),
@@ -243,6 +273,7 @@ export function compressSearch(input: CompressorInput): CompressorResult {
           requiredMatches: required.size,
           fillerMatches: Math.max(0, selected.length - required.size),
           files: new Set(selected.map((match) => match.file)).size,
+          adaptive: { ...adaptive, bias: adaptiveBias },
         },
         dropped: {
           matches: Math.max(0, matches.length - selected.length),

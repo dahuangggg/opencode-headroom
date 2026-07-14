@@ -15,9 +15,14 @@ import {
   type DebugDecision,
   type DebugTraceRecord,
 } from "./debug.js";
+import { decideContextProtection } from "./engine/context-protection.js";
 import { NativeHeadroomCompatibleEngine } from "./engine/native.js";
 import { containsCCRMarker } from "./markers.js";
 import { resolveToolPolicy, type ResolvedToolPolicy } from "./policy.js";
+import { ContextLifecycleManager } from "./session/context-lifecycle.js";
+import { SessionIntentStore } from "./session/intent.js";
+import { deduplicateMessageToolOutputs } from "./session/message-dedup.js";
+import { ReadLifecycleManager } from "./session/read-lifecycle.js";
 import {
   createTrustedOutputFileSource,
   type TrustedOutputFileReadResult,
@@ -28,10 +33,11 @@ import {
   type CompressionTelemetryReason,
 } from "./telemetry.js";
 import { estimateTokens } from "./token.js";
+import { shouldPreserveRawFileRead } from "./read-protection.js";
 import { createRetrieveTool } from "./tools/retrieve.js";
 import { createStatsTool } from "./tools/stats.js";
 
-export type { HeadroomPluginOptions } from "./config.js";
+export type { HeadroomPluginOptions, HeadroomProfile } from "./config.js";
 
 type CompressionSourceKind = "toolOutput" | "outputPath";
 
@@ -49,6 +55,9 @@ const COMPRESSION_TELEMETRY_REASONS = new Set<CompressionTelemetryReason>([
   "below_threshold",
   "legacy_skip_tool",
   "builtin_preserve",
+  "read_protected",
+  "protected_error_output",
+  "protected_recent_code",
   "default_preserve",
   "user_preserve",
   "too_large",
@@ -64,6 +73,11 @@ const COMPRESSION_TELEMETRY_REASONS = new Set<CompressionTelemetryReason>([
   "no_savings",
   "mixed_no_savings",
   "mixed_passthrough",
+  "strategy_circuit_open",
+  "candidate_empty_candidate",
+  "candidate_invalid_structure",
+  "candidate_protected_fact_lost",
+  "candidate_no_token_savings",
   "source_denied",
   "hook_error",
 ]);
@@ -209,7 +223,21 @@ export const HeadroomNativePlugin: Plugin = async (pluginInput, options = {}) =>
   const config = normalizeConfig(options as HeadroomPluginOptions);
   const basePath = pluginBasePath(pluginInput);
   const store = await createCCRStore(resolveStorageConfig(config.storage, basePath));
-  const engine = new NativeHeadroomCompatibleEngine(store);
+  const engine = new NativeHeadroomCompatibleEngine(store, {
+    losslessThenLossy: config.profile === "coding",
+  });
+  const sessionIntents = new SessionIntentStore();
+  const contextLifecycle = new ContextLifecycleManager();
+  const readLifecycle = config.readLifecycle
+    ? new ReadLifecycleManager(store, {
+        basePath,
+        ttlMs: Math.min(
+          config.ttlHours * 60 * 60 * 1000,
+          Number.MAX_SAFE_INTEGER,
+        ),
+        maxReplacements: config.storage.maxEntries,
+      })
+    : undefined;
   const telemetry = new LocalTelemetryAggregator({
     requestedAdapter: store.diagnostics.requested,
     activeAdapter: store.diagnostics.active,
@@ -301,13 +329,41 @@ export const HeadroomNativePlugin: Plugin = async (pluginInput, options = {}) =>
   }
 
   return {
+    "chat.message": async (input, output) => {
+      sessionIntents.update(input.sessionID, output.parts);
+    },
+    "experimental.chat.messages.transform": async (_input, output) => {
+      try {
+        await contextLifecycle.run(output.messages, async (mutationWindow) => {
+          await readLifecycle?.apply(output.messages, mutationWindow);
+          deduplicateMessageToolOutputs(output.messages, mutationWindow);
+        });
+      } catch {
+        // Request transforms must fail open so the model still receives context.
+      }
+    },
     event: async ({ event }) => {
       if (event.type === "session.deleted") {
-        await store.deleteSession(event.properties.info.id);
-        telemetry.deleteSession(event.properties.info.id);
+        const sessionID = event.properties.info.id;
+        await contextLifecycle.runSessionExclusive(sessionID, async () => {
+          try {
+            await store.deleteSession(sessionID);
+          } finally {
+            engine.deleteSessionState(sessionID);
+            telemetry.deleteSession(sessionID);
+            sessionIntents.delete(sessionID);
+            contextLifecycle.deleteSession(sessionID);
+            readLifecycle?.deleteSession(sessionID);
+          }
+        });
       }
     },
     dispose: async () => {
+      await contextLifecycle.closeAndDrain();
+      engine.clearSessionState();
+      sessionIntents.clear();
+      contextLifecycle.clear();
+      readLifecycle?.clear();
       await store.close();
     },
     tool: {
@@ -350,7 +406,14 @@ export const HeadroomNativePlugin: Plugin = async (pluginInput, options = {}) =>
       };
       try {
         const displayOutput = output.output ?? "";
-        const policy = resolveToolPolicy(input.tool, config.toolPolicy);
+        const policy = shouldPreserveRawFileRead(input.args, displayOutput)
+          ? {
+              ruleId: "builtin-shell-read",
+              source: "builtin" as const,
+              action: "preserve" as const,
+              strength: config.toolPolicy.default.strength,
+            }
+          : resolveToolPolicy(input.tool, config.toolPolicy);
         const thresholdChars =
           policy.minimum === "always"
             ? 0
@@ -377,7 +440,9 @@ export const HeadroomNativePlugin: Plugin = async (pluginInput, options = {}) =>
               ...input,
               decision: "skipped",
               reason:
-                policy.source === "user"
+                policy.ruleId === "builtin-shell-read"
+                  ? "read_protected"
+                  : policy.source === "user"
                   ? "user_preserve"
                   : policy.source === "compatibility"
                     ? "legacy_skip_tool"
@@ -477,23 +542,46 @@ export const HeadroomNativePlugin: Plugin = async (pluginInput, options = {}) =>
           return;
         }
 
-        const result = await engine.compress({
-          tool: input.tool,
-          sessionID: input.sessionID,
-          callID: input.callID,
-          args: input.args,
-          output: originalOutput,
-          ttlMs: (policy.ccr?.ttlHours ?? config.ttlHours) * 60 * 60 * 1000,
-          strength: policy.strength,
-          retrieveDefaults: {
-            mode: policy.retrieve?.defaultMode ?? "summary",
-            ...(policy.retrieve?.maxChars !== undefined
-              ? { maxChars: policy.retrieve.maxChars }
-              : policy.retrieve?.defaultMode === "full"
-                ? {}
-                : { maxChars: 12_000 }),
+        const protection =
+          config.profile === "coding" && source.kind === "toolOutput"
+            ? decideContextProtection(originalOutput)
+            : { preserve: false as const };
+        if (protection.preserve) {
+          await complete(
+            createDebugRecord({
+              ...input,
+              decision: "skipped",
+              reason: protection.reason,
+              originalOutput,
+              originalTokens,
+              source,
+              ...policyDebugContext,
+            }),
+          );
+          return;
+        }
+
+        const result = await engine.compressWithKnownTokens(
+          {
+            tool: input.tool,
+            sessionID: input.sessionID,
+            callID: input.callID,
+            args: input.args,
+            intent: sessionIntents.get(input.sessionID),
+            output: originalOutput,
+            ttlMs: (policy.ccr?.ttlHours ?? config.ttlHours) * 60 * 60 * 1000,
+            strength: policy.strength,
+            retrieveDefaults: {
+              mode: policy.retrieve?.defaultMode ?? "summary",
+              ...(policy.retrieve?.maxChars !== undefined
+                ? { maxChars: policy.retrieve.maxChars }
+                : policy.retrieve?.defaultMode === "full"
+                  ? {}
+                  : { maxChars: 12_000 }),
+            },
           },
-        });
+          originalTokens,
+        );
         if (!result.changed) {
           await complete(
             {

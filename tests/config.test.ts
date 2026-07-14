@@ -3,12 +3,13 @@ import { describe, expect, it } from "vitest";
 import { normalizeConfig, shouldSkipTool } from "../src/config.js";
 
 describe("normalizeConfig", () => {
-  it("applies P0 defaults", () => {
+  it("applies coding-profile defaults", () => {
     const config = normalizeConfig();
 
     expect(config.engine).toBe("native");
-    expect(config.thresholdTokens).toBe(2000);
-    expect(config.thresholdChars).toBe(8000);
+    expect(config.profile).toBe("coding");
+    expect(config.thresholdTokens).toBe(25);
+    expect(config.thresholdChars).toBe(25);
     expect(config.ttlHours).toBe(24);
     expect(config.storage).toEqual({
       kind: "auto",
@@ -22,6 +23,40 @@ describe("normalizeConfig", () => {
     expect(config.debugLevel).toBe("summary");
     expect(config.debugSink).toBe("metadata");
     expect(config.debugPath).toBe(".headroom/debug.ndjson");
+    expect(config.readLifecycle).toBe(true);
+  });
+
+  it("keeps the previous thresholds behind the legacy profile", () => {
+    const config = normalizeConfig({ profile: "legacy" });
+
+    expect(config.profile).toBe("legacy");
+    expect(config.thresholdTokens).toBe(2000);
+    expect(config.thresholdChars).toBe(8000);
+    expect(config.readLifecycle).toBe(false);
+  });
+
+  it("allows Read lifecycle behavior to be overridden explicitly", () => {
+    expect(normalizeConfig({ readLifecycle: false }).readLifecycle).toBe(false);
+    expect(
+      normalizeConfig({ profile: "legacy", readLifecycle: true }).readLifecycle,
+    ).toBe(true);
+    expect(() => normalizeConfig({ readLifecycle: "yes" as never })).toThrow(
+      /readLifecycle must be a boolean/,
+    );
+  });
+
+  it("lets explicit thresholds override profile defaults", () => {
+    expect(
+      normalizeConfig({
+        profile: "legacy",
+        thresholdTokens: 80,
+        thresholdChars: 320,
+      }),
+    ).toMatchObject({
+      profile: "legacy",
+      thresholdTokens: 80,
+      thresholdChars: 320,
+    });
   });
 
   it("accepts planned storage backends", () => {
@@ -62,6 +97,9 @@ describe("normalizeConfig", () => {
   it("rejects unsupported engines", () => {
     expect(() => normalizeConfig({ engine: "headroom-http" as never })).toThrow(
       /Unsupported engine/,
+    );
+    expect(() => normalizeConfig({ profile: "unknown" as never })).toThrow(
+      /profile must be one of: coding, legacy/,
     );
   });
 

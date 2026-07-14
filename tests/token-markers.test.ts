@@ -12,7 +12,7 @@ import {
 const hash = "0123456789abcdef01234567";
 
 describe("estimateTokens", () => {
-  it("estimates one token per four characters rounded up", () => {
+  it("keeps deterministic small ASCII estimates", () => {
     expect(estimateTokens("")).toBe(0);
     expect(estimateTokens("abcd")).toBe(1);
     expect(estimateTokens("abcde")).toBe(2);

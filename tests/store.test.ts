@@ -125,6 +125,26 @@ describe("CCR store", () => {
     expect((await store.stats()).totalRetrievals).toBe(2);
   });
 
+  it("peeks without counting an internal lookup as a model retrieval", async () => {
+    const store = new MemoryCCRStore();
+    const entry = await store.put({
+      sessionID: "s1",
+      callID: "c1",
+      tool: "Read",
+      strategy: "read_lifecycle_stale",
+      originalContent: "original output",
+      compressedContent: "compressed output",
+      originalTokens: 4,
+      compressedTokens: 2,
+      ttlMs: 60_000,
+    });
+
+    expect((await store.peek(entry.hash, "s1"))?.originalContent).toBe(
+      "original output",
+    );
+    expect((await store.stats("s1")).totalRetrievals).toBe(0);
+  });
+
   it("removes expired entries before retrieval and stats", async () => {
     const store = new MemoryCCRStore(() => 1000);
     const entry = await store.put({
@@ -587,6 +607,32 @@ console.log(JSON.stringify({ active, message }));
     expect(result.retrievalCount).toBe(1);
     expect(result.totalRetrievals).toBe(1);
     expect(result.entryCount).toBe(1);
+  });
+
+  it("peeks SQLite entries without incrementing retrievals", () => {
+    const result = runBunSQLiteScenario<{
+      originalContent: string | null;
+      totalRetrievals: number;
+    }>(`
+      const store = await createBunSQLiteStore(dbPath);
+      const entry = await store.put(
+        putInput({
+          tool: "Read",
+          strategy: "read_lifecycle_stale",
+          originalContent: "sqlite lifecycle original",
+        }),
+      );
+      const peeked = await store.peek(entry.hash, "s1");
+      return {
+        originalContent: peeked?.originalContent ?? null,
+        totalRetrievals: (await store.stats("s1")).totalRetrievals,
+      };
+    `);
+
+    expect(result).toEqual({
+      originalContent: "sqlite lifecycle original",
+      totalRetrievals: 0,
+    });
   });
 
   it("keeps duplicate content records independent for stats and ttl", () => {

@@ -215,29 +215,46 @@ async function assertExactCodePassthrough(
   return cases;
 }
 
-async function assertExactDiffPassthrough(
+async function assertBoundedDiffQuality(
   engine: NativeHeadroomCompatibleEngine,
   adapter: Adapter,
   target: (typeof QUALITY_TARGETS)[number],
 ): Promise<void> {
   const original = createExactDiffFixture(target.bytes);
+  const sessionID = `bounded-diff-${adapter}-${target.label}`;
   const result = await engine.compress({
     tool: "Bash",
-    sessionID: `exact-diff-${adapter}-${target.label}`,
-    callID: `exact-diff-${target.label}`,
-    args: { query: "diff boundary" },
+    sessionID,
+    callID: `bounded-diff-${target.label}`,
+    args: { query: "value_23.ts diff boundary" },
     output: original,
     ttlMs: TTL_MS,
   });
   assert.equal(
     result.changed,
-    false,
-    `${adapter}/${target.label}/exact-diff must be preserved`,
+    true,
+    `${adapter}/${target.label}/bounded-diff must be compressed`,
+  );
+  assert.ok(
+    result.hash,
+    `${adapter}/${target.label}/bounded-diff must receive a CCR hash`,
   );
   assert.equal(
-    result.output,
+    result.output.match(/^diff --git /gm)?.length,
+    20,
+    `${adapter}/${target.label}/bounded-diff must keep 20 files`,
+  );
+  assert.ok(
+    result.output.includes(
+      "diff --git a/src/value_23.ts b/src/value_23.ts",
+    ),
+    `${adapter}/${target.label}/bounded-diff must keep the query match`,
+  );
+  const full = await engine.retrieve(result.hash, { mode: "full" }, sessionID);
+  assert.equal(
+    full.output,
     original,
-    `${adapter}/${target.label}/exact-diff must remain byte-exact`,
+    `${adapter}/${target.label}/bounded-diff full retrieve must be byte-exact`,
   );
 }
 
@@ -286,7 +303,7 @@ export async function runQualityGate(): Promise<void> {
             await assertFixtureQuality(engine, adapter, target, fixture),
           );
         }
-        await assertExactDiffPassthrough(engine, adapter, target);
+        await assertBoundedDiffQuality(engine, adapter, target);
       }
       exactCodeCases += await assertExactCodePassthrough(adapter, directory);
     });
@@ -314,7 +331,7 @@ export async function runQualityGate(): Promise<void> {
       `${ADAPTERS.length} adapters, ${QUALITY_TARGETS.length} payload sizes, and ` +
       `${corpora.values().next().value?.length ?? 0} fixture shapes; ` +
       `${mustKeepFacts} compressed/query mustKeep checks, ${exactCodeCases} exact-code passthroughs, ` +
-      `${ADAPTERS.length * QUALITY_TARGETS.length} exact-diff passthroughs, ` +
+      `${ADAPTERS.length * QUALITY_TARGETS.length} bounded-diff CCR round-trips, ` +
       `${results.length} bounded non-negative default retrieves; ` +
       `${(structuredSavings.ratio * 100).toFixed(1)}% structured and ` +
       `${(totalSavings.ratio * 100).toFixed(1)}% overall estimated net savings`,

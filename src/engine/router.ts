@@ -1,7 +1,17 @@
+import { compressCode } from "../compressors/code.js";
+import { compressDiff } from "../compressors/diff.js";
+import { compressHtml } from "../compressors/html.js";
 import { compressJson } from "../compressors/json.js";
 import { compressLog } from "../compressors/log.js";
 import { compressSearch } from "../compressors/search.js";
+import { compressTabular, parseTabular } from "../compressors/tabular.js";
 import { compressText } from "../compressors/text.js";
+import {
+  compactLossless,
+  type LosslessCompaction,
+} from "./lossless.js";
+import { gateCompressionCandidate } from "./pipeline.js";
+import type { StrategyCircuitBreaker } from "./resilience.js";
 import type {
   CompressorInput,
   CompressorResult,
@@ -61,6 +71,97 @@ interface ExplicitSection {
 interface ExplicitSections {
   sections: ExplicitSection[];
   tail: string;
+}
+
+export interface ContentCompressionOptions {
+  losslessThenLossy?: boolean;
+}
+
+export interface ContentCompressionRuntime {
+  circuitBreaker?: StrategyCircuitBreaker;
+}
+
+export function executeStrategyWithBreaker(
+  kind: DetectionResult["kind"],
+  input: CompressorInput,
+  operation: () => CompressorResult,
+  breaker?: StrategyCircuitBreaker,
+): CompressorResult {
+  if (breaker?.isOpen(kind)) {
+    return {
+      changed: false,
+      output: input.content,
+      strategy: kind,
+      reason: "strategy_circuit_open",
+      cacheable: false,
+    };
+  }
+
+  try {
+    const result = operation();
+    breaker?.recordSuccess(kind);
+    return result;
+  } catch (error) {
+    breaker?.recordFailure(kind);
+    throw error;
+  }
+}
+
+interface AcceptedCompressionCandidate {
+  output: string;
+  originalTokens: number;
+  candidateTokens: number;
+}
+
+function selectCompressionCandidate(input: {
+  original: string;
+  lossy: CompressorResult;
+  lossless: LosslessCompaction;
+  kind: DetectionResult["kind"];
+  originalTokens?: number;
+}): {
+  accepted?: AcceptedCompressionCandidate;
+  rejectedReason?: string;
+} {
+  const candidates: string[] = [];
+  if (input.lossy.changed) {
+    candidates.push(input.lossy.output);
+  }
+  if (
+    input.lossless.changed &&
+    !candidates.includes(input.lossless.output)
+  ) {
+    candidates.push(input.lossless.output);
+  }
+
+  let rejectedReason: string | undefined;
+  for (const candidate of candidates) {
+    const gate = gateCompressionCandidate({
+      original: input.original,
+      candidate,
+      kind: input.kind,
+      checkStructure:
+        candidate === input.lossless.output && input.lossless.changed
+          ? false
+          : undefined,
+      checkProtectedFacts:
+        candidate === input.lossless.output && input.lossless.changed
+          ? false
+          : undefined,
+      originalTokens: input.originalTokens,
+    });
+    if (gate.accepted) {
+      return {
+        accepted: {
+          output: candidate,
+          originalTokens: gate.originalTokens,
+          candidateTokens: gate.candidateTokens,
+        },
+      };
+    }
+    rejectedReason = gate.reason;
+  }
+  return rejectedReason ? { rejectedReason } : {};
 }
 
 function routeContent(content: string): RoutedContent {
@@ -128,6 +229,8 @@ function routeExplicitSections(content: string): ExplicitSections | undefined {
 
 function compressExplicitSections(
   input: CompressorInput,
+  options: ContentCompressionOptions,
+  runtime: ContentCompressionRuntime,
 ): CompressorResult | undefined {
   const routed = routeExplicitSections(input.content);
   if (!routed) {
@@ -135,11 +238,21 @@ function compressExplicitSections(
   }
 
   let changed = false;
+  let cacheable = true;
   const debugSections: Array<Record<string, unknown>> = [];
   const output = [
     ...routed.sections.map((section) => {
-      const result = compressByContentType({ ...input, content: section.payload });
+      const result = compressByContentType(
+        {
+          ...input,
+          content: section.payload,
+          originalTokens: undefined,
+        },
+        options,
+        runtime,
+      );
       changed ||= result.changed;
+      cacheable &&= result.cacheable !== false;
       debugSections.push({
         tag: section.tag,
         kind: result.debug?.router?.kind ?? result.strategy,
@@ -171,10 +284,38 @@ function compressExplicitSections(
       output: input.content,
       strategy: "text",
       reason: changed ? "mixed_no_savings" : "mixed_passthrough",
+      ...(cacheable ? {} : { cacheable: false }),
       debug,
     };
   }
-  return { changed: true, output, strategy: "text", debug };
+  const gate = gateCompressionCandidate({
+    original: input.content,
+    candidate: output,
+    kind: "text",
+    checkProtectedFacts: false,
+    originalTokens: input.originalTokens,
+  });
+  if (!gate.accepted) {
+    return {
+      changed: false,
+      output: input.content,
+      strategy: "text",
+      reason: `candidate_${gate.reason}`,
+      ...(cacheable ? {} : { cacheable: false }),
+      debug,
+    };
+  }
+  return {
+    changed: true,
+    output,
+    strategy: "text",
+    ...(cacheable ? {} : { cacheable: false }),
+    debug,
+    tokenCounts: {
+      original: gate.originalTokens,
+      compressed: gate.candidateTokens,
+    },
+  };
 }
 
 export function stripDetectionEnvelope(content: string): string {
@@ -215,7 +356,7 @@ function detectCode(content: string): DetectionResult | undefined {
   }
 
   return {
-    kind: "text",
+    kind: "code",
     confidence: Math.min(1, 0.5 + patternMatches * 0.03),
     metadata: {
       code: true,
@@ -231,6 +372,9 @@ function detectPayloadType(probe: string): DetectionResult {
   }
 
   const trimmed = probe.trim();
+  if (/<!doctype\s+html\b|<html\b|<main\b|<article\b/i.test(trimmed)) {
+    return { kind: "html", confidence: 0.98, metadata: {} };
+  }
   if (trimmed.startsWith("[") || trimmed.startsWith("{")) {
     try {
       JSON.parse(trimmed);
@@ -241,6 +385,14 @@ function detectPayloadType(probe: string): DetectionResult {
   }
 
   const firstLines = probe.split(/\r?\n/).slice(0, 500);
+  const table = parseTabular(probe);
+  if (table) {
+    return {
+      kind: "table",
+      confidence: 0.95,
+      metadata: { format: table.delimiter, rows: table.rows.length },
+    };
+  }
   const diffHeaders = firstLines.filter((line) =>
     DIFF_HEADER_RE.test(line),
   ).length;
@@ -292,61 +444,103 @@ export function detectContentType(content: string): DetectionResult {
   return detectPayloadType(routeContent(content).payload);
 }
 
-export function compressByContentType(input: CompressorInput): CompressorResult {
-  const mixed = compressExplicitSections(input);
+export function compressByContentType(
+  input: CompressorInput,
+  options: ContentCompressionOptions = {},
+  runtime: ContentCompressionRuntime = {},
+): CompressorResult {
+  const mixed = compressExplicitSections(input, options, runtime);
   if (mixed) {
     return mixed;
   }
 
   const routed = routeContent(input.content);
   const detection = detectPayloadType(routed.payload);
-  const attachRouterDebug = (result: CompressorResult): CompressorResult => ({
-    ...result,
-    output: result.changed ? routed.render(result.output) : input.content,
-    debug: {
-      ...(result.debug ?? {}),
-      router: {
-        kind: detection.kind,
-        confidence: detection.confidence,
-        metadata: detection.metadata,
-      },
-    },
-  });
-
-  if (detection.metadata.code === true) {
-    return attachRouterDebug({
-      changed: false,
-      output: input.content,
-      strategy: "text",
-      reason: "code_passthrough",
+  const lossless = options.losslessThenLossy
+    ? compactLossless(routed.payload, detection.kind)
+    : { changed: false as const, output: routed.payload };
+  const compressorInput = {
+    ...input,
+    content: lossless.output,
+    originalTokens: lossless.changed ? undefined : input.originalTokens,
+  };
+  const attachRouterDebug = (result: CompressorResult): CompressorResult => {
+    const { accepted, rejectedReason } = selectCompressionCandidate({
+      original: routed.payload,
+      lossy: result,
+      lossless,
+      kind: detection.kind,
+      originalTokens:
+        routed.payload === input.content ? input.originalTokens : undefined,
     });
+    const reusableTokenCounts =
+      accepted && routed.payload === input.content
+        ? {
+            original: accepted.originalTokens,
+            compressed: accepted.candidateTokens,
+          }
+        : undefined;
+    return {
+      ...result,
+      changed: accepted !== undefined,
+      output: accepted ? routed.render(accepted.output) : input.content,
+      ...(accepted
+        ? { reason: undefined }
+        : rejectedReason
+          ? { reason: `candidate_${rejectedReason}` }
+          : {}),
+      ...(reusableTokenCounts ? { tokenCounts: reusableTokenCounts } : {}),
+      debug: {
+        ...(result.debug ?? {}),
+        ...(options.losslessThenLossy
+          ? {
+              lossless: {
+                applied: lossless.changed,
+                ...(lossless.changed ? { transform: lossless.transform } : {}),
+                originalChars: routed.payload.length,
+                compactedChars: lossless.output.length,
+              },
+            }
+          : {}),
+        router: {
+          kind: detection.kind,
+          confidence: detection.confidence,
+          metadata: detection.metadata,
+        },
+      },
+    };
+  };
+  const executeStrategy = (
+    operation: () => CompressorResult,
+  ): CompressorResult =>
+    executeStrategyWithBreaker(
+      detection.kind,
+      input,
+      () => attachRouterDebug(operation()),
+      runtime.circuitBreaker,
+    );
+
+  if (detection.kind === "code") {
+    return executeStrategy(() => compressCode(compressorInput));
   }
 
   if (detection.kind === "diff") {
-    return attachRouterDebug({
-      changed: false,
-      output: input.content,
-      strategy: "diff",
-      reason: "diff_passthrough",
-      debug: {
-        compressor: {
-          strategy: "diff",
-          originalChars: input.content.length,
-          compressedChars: input.content.length,
-          kept: {},
-          dropped: {},
-        },
-      },
-    });
+    return executeStrategy(() => compressDiff(compressorInput));
   }
   if (detection.kind === "json") {
-    return attachRouterDebug(compressJson({ ...input, content: routed.payload }));
+    return executeStrategy(() => compressJson(compressorInput));
   }
   if (detection.kind === "search") {
-    return attachRouterDebug(compressSearch({ ...input, content: routed.payload }));
+    return executeStrategy(() => compressSearch(compressorInput));
   }
   if (detection.kind === "log") {
-    return attachRouterDebug(compressLog({ ...input, content: routed.payload }));
+    return executeStrategy(() => compressLog(compressorInput));
   }
-  return attachRouterDebug(compressText({ ...input, content: routed.payload }));
+  if (detection.kind === "table") {
+    return executeStrategy(() => compressTabular(compressorInput));
+  }
+  if (detection.kind === "html") {
+    return executeStrategy(() => compressHtml(compressorInput));
+  }
+  return executeStrategy(() => compressText(compressorInput));
 }

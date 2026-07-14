@@ -1,4 +1,12 @@
-export type ContentKind = "json" | "search" | "log" | "text" | "diff";
+export type ContentKind =
+  | "json"
+  | "search"
+  | "log"
+  | "text"
+  | "code"
+  | "diff"
+  | "table"
+  | "html";
 
 export interface DetectionResult {
   kind: ContentKind;
@@ -11,6 +19,7 @@ export interface CompressorInput {
   hash: string;
   query: string;
   profile?: CompressionProfile;
+  originalTokens?: number;
 }
 
 export interface CompressorDebugSummary {
@@ -29,6 +38,12 @@ export interface CompressionDebugInfo {
     metadata: Record<string, unknown>;
   };
   compressor?: CompressorDebugSummary;
+  lossless?: {
+    applied: boolean;
+    transform?: "runs" | "search_heading" | "json_table";
+    originalChars: number;
+    compactedChars: number;
+  };
   ccr?: {
     hash?: string;
     stored: boolean;
@@ -40,6 +55,12 @@ export interface CompressorResult {
   output: string;
   strategy: ContentKind;
   reason?: string;
+  /** False when the decision depends on transient runtime state. */
+  cacheable?: boolean;
   debug?: CompressionDebugInfo;
+  tokenCounts?: {
+    original: number;
+    compressed: number;
+  };
 }
 import type { CompressionProfile } from "./profile.js";

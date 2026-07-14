@@ -1,6 +1,6 @@
 {
   "name": "@dahuangggg/opencode-headroom",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Headroom-compatible native OpenCode plugin for tool-output compression and CCR retrieval",
   "keywords": [
     "opencode",
@@ -48,6 +48,8 @@
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "bench:check": "bun benchmarks/check.ts",
+    "bench:oracle:refresh": "bun benchmarks/parity/refresh.ts",
+    "bench:quality": "bun benchmarks/parity/run.ts",
     "bench:report": "bun benchmarks/headroom-cost-experiment.ts --report",
     "bench:perf": "bun benchmarks/performance.ts",
     "lint:package": "node scripts/package-lint.mjs",
@@ -55,6 +57,8 @@
     "test:watch": "vitest"
   },
   "dependencies": {
+    "@lezer/javascript": "^1.5.4",
+    "@lezer/python": "^1.1.19",
     "@opencode-ai/plugin": "^1.17.8",
     "zod": "^4.1.0"
   },

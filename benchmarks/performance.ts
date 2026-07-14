@@ -10,10 +10,10 @@ import { HeadroomNativePlugin } from "../src/plugin.js";
 import { MemoryCCRStore } from "../src/store/memory.js";
 import { createBunSQLiteStore } from "../src/store/sqlite-bun.js";
 import type { CCRPutInput, CCRStore } from "../src/store/types.js";
-import { estimateTokens } from "../src/token.js";
+import { createTokenCounter, estimateTokens } from "../src/token.js";
 
 type StoreBackend = "memory" | "bun-sqlite";
-type ReportBackend = StoreBackend | "router";
+type ReportBackend = StoreBackend | "router" | "tokenizer";
 
 export interface PayloadCase {
   label: string;
@@ -29,12 +29,16 @@ interface Distribution {
 }
 
 type Operation =
+  | "token.counter(cold)"
+  | "token.counter(hot)"
   | "router.detect"
   | "store.put"
   | "store.get"
   | "engine.compress"
+  | "engine.compress(cache-hit)"
   | "engine.retrieve(query)"
   | "plugin.tool.execute.after"
+  | "plugin.messages.transform"
   | "store.put(concurrent-workers=4)"
   | "store.cold-start";
 
@@ -52,6 +56,7 @@ const TTL_MS = 60 * 60 * 1000;
 const QUERY = "benchmark needle validation failed";
 const SQLITE_CONNECTIONS = 4;
 const P0_HOOK_MAX_P95_MS = 50;
+const P0_MESSAGE_TRANSFORM_MAX_P95_MS = 50;
 const TARGETS = [
   { label: "10KiB", bytes: 10 * 1024 },
   { label: "100KiB", bytes: 100 * 1024 },
@@ -232,6 +237,27 @@ async function benchmarkRouter(
   return { backend: "router", payload, operation: "router.detect", distribution };
 }
 
+async function benchmarkTokenCounter(
+  payload: PayloadCase,
+): Promise<PerformanceResultRow[]> {
+  const cold = await measure(async () => {
+    const counter = createTokenCounter({ model: "performance-calibrated" });
+    if (counter.count(payload.content) <= 0) {
+      throw new Error(`${payload.label} cold token counter returned no tokens`);
+    }
+  });
+  const counter = createTokenCounter({ model: "performance-calibrated" });
+  const hot = await measure(async () => {
+    if (counter.count(payload.content) <= 0) {
+      throw new Error(`${payload.label} hot token counter returned no tokens`);
+    }
+  });
+  return [
+    { backend: "tokenizer", payload, operation: "token.counter(cold)", distribution: cold },
+    { backend: "tokenizer", payload, operation: "token.counter(hot)", distribution: hot },
+  ];
+}
+
 async function benchmarkStoreAndEngine(
   backend: StoreBackend,
   payload: PayloadCase,
@@ -239,9 +265,22 @@ async function benchmarkStoreAndEngine(
   return withStore(backend, async (store) => {
     const engine = new NativeHeadroomCompatibleEngine(store);
     const sessionID = `perf-${backend}-${payload.label}`;
+    const directInputs = new Map(
+      Array.from({ length: WARMUP_RUNS + SAMPLE_RUNS }, (_, offset) => {
+        const iteration = offset - WARMUP_RUNS;
+        return [
+          iteration,
+          directPutInput(payload, sessionID, iteration),
+        ] as const;
+      }),
+    );
     let directHash: string | undefined;
     const storePut = await measure(async (iteration) => {
-      const entry = await store.put(directPutInput(payload, sessionID, iteration));
+      const input = directInputs.get(iteration);
+      if (!input) {
+        throw new Error(`missing precomputed Store input ${iteration}`);
+      }
+      const entry = await store.put(input);
       directHash = entry.hash;
     });
     if (!directHash) {
@@ -256,11 +295,13 @@ async function benchmarkStoreAndEngine(
     });
 
     let engineHash: string | undefined;
+    let engineSessionID: string | undefined;
     const compress = await measure(async (iteration) => {
       const content = `${payload.content}\nbench/iteration.ts:${100_000 + iteration}:INFO benchmark sample iteration=${iteration}`;
+      engineSessionID = `${sessionID}-compress-${iteration}`;
       const result = await engine.compress({
         tool: "Bash",
-        sessionID,
+        sessionID: engineSessionID,
         callID: `compress-${iteration}`,
         args: { command: "rg target", query: QUERY },
         output: content,
@@ -274,6 +315,39 @@ async function benchmarkStoreAndEngine(
     if (!engineHash) {
       throw new Error(`${backend}/${payload.label} benchmark retained no engine hash`);
     }
+    if (!engineSessionID) {
+      throw new Error(`${backend}/${payload.label} benchmark retained no engine session`);
+    }
+
+    const cacheHitContent = `${payload.content}\nbench/cache-hit.ts:300000:INFO stable decision-cache sample`;
+    const primed = await engine.compress({
+      tool: "Bash",
+      sessionID: `${sessionID}-cache-prime`,
+      callID: "cache-prime",
+      args: { command: "rg target", query: QUERY },
+      output: cacheHitContent,
+      ttlMs: TTL_MS,
+    });
+    if (!primed.changed || !primed.hash) {
+      throw new Error(
+        `${backend}/${payload.label} did not prime the compression decision cache`,
+      );
+    }
+    const cacheHitCompress = await measure(async (iteration) => {
+      const result = await engine.compress({
+        tool: "Bash",
+        sessionID: `${sessionID}-cache-hit-${iteration}`,
+        callID: `cache-hit-${iteration}`,
+        args: { command: "rg target", query: QUERY },
+        output: cacheHitContent,
+        ttlMs: TTL_MS,
+      });
+      if (!result.changed || !result.hash) {
+        throw new Error(
+          `${backend}/${payload.label} decision-cache sample did not produce a CCR entry`,
+        );
+      }
+    });
 
     const partialRetrieve = await measure(async () => {
       const value = await engine.retrieve(
@@ -285,7 +359,7 @@ async function benchmarkStoreAndEngine(
           maxMatches: 5,
           maxChars: 4_000,
         },
-        sessionID,
+        engineSessionID,
       );
       if (!value.found || !value.output.includes("benchmark needle")) {
         throw new Error(`${backend}/${payload.label} partial retrieve missed its query`);
@@ -296,6 +370,12 @@ async function benchmarkStoreAndEngine(
       { backend, payload, operation: "store.put", distribution: storePut },
       { backend, payload, operation: "store.get", distribution: storeGet },
       { backend, payload, operation: "engine.compress", distribution: compress },
+      {
+        backend,
+        payload,
+        operation: "engine.compress(cache-hit)",
+        distribution: cacheHitCompress,
+      },
       {
         backend,
         payload,
@@ -347,7 +427,7 @@ async function benchmarkPluginHook(
       await hook(
         {
           tool: "Bash",
-          sessionID: `perf-hook-${backend}-${payload.label}`,
+          sessionID: `perf-hook-${backend}-${payload.label}-${iteration}`,
           callID: `hook-${iteration}`,
           args: { command: "rg target", query: QUERY },
         },
@@ -372,6 +452,112 @@ async function benchmarkPluginHook(
   }
 }
 
+function completedPerformanceTool(input: {
+  tool: "Read" | "Edit";
+  sessionID: string;
+  callID: string;
+  filePath: string;
+  output: string;
+}) {
+  return {
+    id: `${input.callID}-part`,
+    sessionID: input.sessionID,
+    messageID: `${input.callID}-message`,
+    type: "tool",
+    callID: input.callID,
+    tool: input.tool,
+    state: {
+      status: "completed",
+      input: { filePath: input.filePath },
+      output: input.output,
+      title: input.tool,
+      metadata: {},
+      time: { start: 1, end: 2 },
+    },
+  };
+}
+
+async function benchmarkPluginMessageTransform(
+  backend: StoreBackend,
+  payload: PayloadCase,
+): Promise<PerformanceResultRow> {
+  const directory = await mkdtemp(
+    join(tmpdir(), "opencode-headroom-message-perf-"),
+  );
+  const plugin = await HeadroomNativePlugin(pluginInput(directory), {
+    storage: {
+      kind: backend,
+      path: join(directory, "messages.sqlite"),
+    },
+  });
+
+  try {
+    const transform = plugin["experimental.chat.messages.transform"];
+    if (!transform) {
+      throw new Error("plugin did not register messages.transform");
+    }
+    for (let offset = 0; offset < WARMUP_RUNS + SAMPLE_RUNS; offset += 1) {
+      const iteration = offset - WARMUP_RUNS;
+      const sessionID = `perf-messages-${backend}-${payload.label}-${iteration}`;
+      await transform(
+        {},
+        {
+          messages: [
+            {
+              info: { id: `seed-${iteration}`, sessionID },
+              parts: [],
+            },
+          ],
+        } as never,
+      );
+    }
+    const distribution = await measure(async (iteration) => {
+      const sessionID = `perf-messages-${backend}-${payload.label}-${iteration}`;
+      const read = completedPerformanceTool({
+        tool: "Read",
+        sessionID,
+        callID: `read-${iteration}`,
+        filePath: "src/performance.ts",
+        output: payload.content,
+      });
+      const edit = completedPerformanceTool({
+        tool: "Edit",
+        sessionID,
+        callID: `edit-${iteration}`,
+        filePath: "src/performance.ts",
+        output: "Done",
+      });
+      await transform(
+        {},
+        {
+          messages: [
+            {
+              info: { id: read.messageID, sessionID },
+              parts: [read],
+            },
+            {
+              info: { id: edit.messageID, sessionID },
+              parts: [edit],
+            },
+          ],
+        } as never,
+      );
+      if (!read.state.output.includes("is stale after a later write")) {
+        throw new Error(`${backend}/${payload.label} Read lifecycle did not fold`);
+      }
+    });
+    return {
+      backend,
+      payload,
+      operation: "plugin.messages.transform",
+      distribution,
+    };
+  } finally {
+    await plugin.dispose?.();
+    await rm(directory, { recursive: true, force: true });
+  }
+}
+
 async function benchmarkSQLiteConcurrentPut(
   payload: PayloadCase,
 ): Promise<PerformanceResultRow> {
@@ -387,16 +573,31 @@ async function benchmarkSQLiteConcurrentPut(
     for (const worker of workers) {
       await worker.call({ action: "initialize", path });
     }
-    const distribution = await measure(async (iteration) => {
-      await Promise.all(
-        workers.map((worker, connection) =>
-          worker.call({
-            action: "put",
-            input: directPutInput(
+    const inputs = new Map(
+      Array.from({ length: WARMUP_RUNS + SAMPLE_RUNS }, (_, offset) => {
+        const iteration = offset - WARMUP_RUNS;
+        return [
+          iteration,
+          workers.map((_, connection) =>
+            directPutInput(
               payload,
               `perf-sqlite-worker-${connection}`,
               iteration * SQLITE_CONNECTIONS + connection,
             ),
+          ),
+        ] as const;
+      }),
+    );
+    const distribution = await measure(async (iteration) => {
+      const iterationInputs = inputs.get(iteration);
+      if (!iterationInputs) {
+        throw new Error(`missing precomputed concurrent input ${iteration}`);
+      }
+      await Promise.all(
+        workers.map((worker, connection) =>
+          worker.call({
+            action: "put",
+            input: iterationInputs[connection],
           }),
         ),
       );
@@ -455,6 +656,49 @@ export function assertP0HookLatency(
   return p0;
 }
 
+export function assertP0MessageTransformLatency(
+  results: PerformanceResultRow[],
+): PerformanceResultRow {
+  const p0 = results.find(
+    (result) =>
+      result.backend === "memory" &&
+      result.payload.label === "10KiB" &&
+      result.operation === "plugin.messages.transform",
+  );
+  if (!p0) {
+    throw new Error("missing P0 Read lifecycle message-transform result");
+  }
+  if (!(p0.distribution.p95 < P0_MESSAGE_TRANSFORM_MAX_P95_MS)) {
+    throw new Error(
+      `Read lifecycle P0 p95 ${p0.distribution.p95.toFixed(3)} ms must be below ${P0_MESSAGE_TRANSFORM_MAX_P95_MS} ms`,
+    );
+  }
+  return p0;
+}
+
+export function assertTokenizerPerformanceReported(
+  results: PerformanceResultRow[],
+): void {
+  if (!results.some((result) => result.operation === "token.counter(cold)")) {
+    throw new Error("missing cold token-counter performance result");
+  }
+  if (!results.some((result) => result.operation === "token.counter(hot)")) {
+    throw new Error("missing hot token-counter performance result");
+  }
+}
+
+export function assertDecisionCachePerformanceReported(
+  results: PerformanceResultRow[],
+): void {
+  if (
+    !results.some(
+      (result) => result.operation === "engine.compress(cache-hit)",
+    )
+  ) {
+    throw new Error("missing hot decision-cache compression result");
+  }
+}
+
 function milliseconds(value: number): string {
   return value.toFixed(3);
 }
@@ -464,12 +708,14 @@ async function main(): Promise<void> {
   const results: PerformanceResultRow[] = [];
 
   for (const payload of payloads) {
+    results.push(...(await benchmarkTokenCounter(payload)));
     results.push(await benchmarkRouter(payload));
   }
   for (const backend of ["memory", "bun-sqlite"] as const) {
     for (const payload of payloads) {
       results.push(...(await benchmarkStoreAndEngine(backend, payload)));
       results.push(await benchmarkPluginHook(backend, payload));
+      results.push(await benchmarkPluginMessageTransform(backend, payload));
     }
   }
   for (const payload of payloads) {
@@ -494,8 +740,14 @@ async function main(): Promise<void> {
   }
 
   const p0 = assertP0HookLatency(results);
+  const messageP0 = assertP0MessageTransformLatency(results);
+  assertTokenizerPerformanceReported(results);
+  assertDecisionCachePerformanceReported(results);
   console.log(
     `P0 gate passed: memory 10KiB plugin.tool.execute.after p95=${milliseconds(p0.distribution.p95)}ms < ${P0_HOOK_MAX_P95_MS}ms`,
+  );
+  console.log(
+    `P0 gate passed: memory 10KiB plugin.messages.transform p95=${milliseconds(messageP0.distribution.p95)}ms < ${P0_MESSAGE_TRANSFORM_MAX_P95_MS}ms`,
   );
   console.log(
     "SQLite concurrent-worker and cold-start rows are recorded baselines, not blocking thresholds.",
