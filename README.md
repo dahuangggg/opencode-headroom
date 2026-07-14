@@ -11,6 +11,12 @@ bounded retrieval defaults, bounded storage, session lifecycle cleanup, and
 local cost telemetry. The plugin never learns preferences or changes policy
 from observed behavior.
 
+The current native engine also adds effect-parity coverage for code, diffs,
+tables, HTML, and explicit mixed output; calibrated token accounting; bounded
+session intent; and same-session repeated-output folding. These deepen private
+compression behavior without adding a proxy or changing the public 0.2
+configuration surface.
+
 The implementation follows Headroom's routing, compression, and CCR concepts,
 but does not run the Headroom proxy or require Headroom's Python/Rust runtime.
 
@@ -45,11 +51,15 @@ After a tool finishes, the plugin:
    output;
 2. preserves protected tools or rejects untrusted output paths;
 3. skips empty, small, already-marked, and oversized output;
-4. detects JSON, source code, search output, logs, diffs, or plain text;
-5. applies the selected compression strength and keeps the result only when it
-   saves estimated tokens;
+4. detects JSON, source code, search output, logs, diffs, tables, HTML,
+   explicit mixed sections, or plain text;
+5. applies a type-specific compressor and accepts the candidate only when its
+   structure and protected facts survive and the calibrated counter reports
+   token savings;
 6. commits the exact original and the chosen retrieve defaults to CCR;
-7. records local counters and latency without recording output, arguments, path
+7. folds exact or highly similar output only when a bounded same-session match
+   exists, while committing another exactly retrievable CCR record;
+8. records local counters and latency without recording output, arguments, path
    content, or query text.
 
 The plugin registers:
@@ -201,9 +211,11 @@ limit is reached, the oldest active entries are evicted first. SQLite uses
 `secure_delete=ON`, and best-effort owner-only file permissions.
 
 When OpenCode emits `session.deleted`, the plugin deletes that session's CCR
-entries and per-session telemetry. Process-global historical telemetry remains
-until the plugin is disposed. The plugin's `dispose` hook closes the store;
-SQLite close is idempotent.
+entries, latest-user-intent state, repetition fingerprints, and per-session
+telemetry. Process-global historical telemetry remains until the plugin is
+disposed. The plugin's `dispose` hook clears bounded session state and closes
+the store; SQLite close is idempotent. Repetition state stores bounded hashes
+and line fingerprints, not raw tool output; exact bytes remain owned by CCR.
 
 ### SQLite schema v2
 
@@ -337,9 +349,10 @@ A direct replacement for a custom 0.1 skip list is:
 ### An output was not compressed
 
 It may match a preserve rule, be below both selected thresholds, contain an
-existing CCR marker, exceed `maxOutputChars`, be detected as exact code or a
-diff, or produce no estimated savings. Enable summary debug metadata to see the
-resolved rule, strength, thresholds, and decision reason.
+existing CCR marker, exceed `maxOutputChars`, lack enough safe type-specific
+folding opportunities, fail a protected-fact or structure gate, or produce no
+estimated savings. Enable summary debug metadata to see the resolved rule,
+strength, thresholds, and decision reason.
 
 ### SQLite was not created
 
@@ -367,19 +380,22 @@ bun install
 bun test tests
 bun run typecheck
 npm run build
+bun run bench:quality
 bun run bench:check
 bun run bench:perf
 npm run lint:package
 npm run test:package
 ```
 
-`bun.lock` is the canonical lockfile. `bench:check` is deterministic and does
-not rewrite the tracked cost report; `bench:report` is the explicit report
-writer. `bench:perf` measures fixed-seed router, Store put/get, compression,
+`bun.lock` is the canonical lockfile. `bench:quality` enforces the pinned
+Headroom effect-parity corpus. `bench:check` is deterministic and does not
+rewrite the tracked cost report; `bench:report` is the explicit report writer.
+`bench:perf` reports calibrated token counting cold/hot paths separately and
+measures fixed-seed router, Store put/get, ordinary non-repetition compression,
 bounded retrieval, complete plugin-hook, SQLite worker-concurrent writes, and
 cold-start p50/p95/max results without writing a report. It blocks only when
 the P0 10 KiB memory-backed `tool.execute.after` p95 is not below 50 ms; the
-larger and SQLite rows remain baselines until enough stable CI history exists.
+larger and SQLite rows remain reviewed baselines.
 `lint:package` checks npm-normalized manifest metadata, self-dependencies,
 public export paths, packed export targets, and conflict-copy files. The
 package smoke removes `dist`, packs from a clean state, validates

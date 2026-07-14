@@ -28,15 +28,17 @@ OpenCode tool result
   -> threshold / marker / size gates
   -> NativeHeadroomCompatibleEngine
      -> ContentRouter
-     -> JSON | search | log | text compressor profile
+     -> JSON | search | log | text | code | diff | table | HTML compressor
+     -> protected-fact + structure + calibrated-token candidate gate
+     -> bounded same-session repetition matcher
      -> CCRStore commit with retrieve defaults
   -> compressed output + canonical hash + metadata
   -> LocalTelemetryAggregator
 
 headroom_retrieve -> session-scoped CCR get -> bounded view or explicit full
 headroom_stats    -> CCR stats + global/session telemetry snapshot
-session.deleted   -> delete session CCR rows + session telemetry
-dispose           -> close the active CCR adapter
+session.deleted   -> delete session CCR rows + intent/repetition/telemetry state
+dispose           -> clear session state + close the active CCR adapter
 ```
 
 Normal hook, compression, debug, and telemetry failures must never corrupt or
@@ -136,14 +138,35 @@ interface CompressionEngine {
 ```
 
 The router unwraps supported whole-output envelopes for detection and rendering,
-then classifies JSON, source code, git diffs, search results, logs, or text.
-Source code and diffs are passthrough by default. The exact original string, not
-the routed view, is offered to CCR.
+then classifies JSON, source code, git diffs, search results, logs, tables,
+HTML, or text. Explicit tagged mixed sections are routed independently while
+their framing remains intact. Code compression preserves imports,
+declarations, signatures, types, errors, and query-relevant symbols. Diff
+compression preserves file headers, hunk headers, additions, and deletions
+while folding unchanged context. The exact original string, not the routed
+view, is offered to CCR.
 
 `conservative`, `balanced`, and `aggressive` map to private per-compressor
 budgets. The public policy does not expose row counts, scoring weights, stack
-limits, or text ratios. A proposed result is accepted only when its estimated
-token count is lower than the original.
+limits, or text ratios. A proposed result is accepted only when type-specific
+structure and protected facts survive and the calibrated counter reports fewer
+tokens than the original. The counter can wrap a locally available
+model-specific tokenizer; otherwise it uses deterministic calibration for
+prose, CJK, code, and high-entropy content.
+
+### Bounded session context and repetition
+
+The latest real user text is retained per session with fixed session and
+character limits. It is combined with scalar tool arguments only in memory to
+rank relevant content; raw intent, arguments, and queries never enter
+telemetry.
+
+After a normal CCR commit, `SessionRepetitionStore` retains only bounded content
+signatures and line fingerprints. A later exact or at-least-90%-similar result
+in the same session may become a short repetition pointer, but it still travels
+through the canonical Store commit and `mode=full` returns the new call's exact
+bytes. Matches cannot cross sessions, expire with their owning entry, and are
+removed on session deletion or disposal.
 
 ### Canonical CCR commit
 
@@ -266,9 +289,9 @@ fail-open.
 
 - A normal hook failure preserves the original displayed output.
 - An existing CCR marker is not compressed again.
-- Source code and diffs recognized by the router remain passthrough. An explicit
-  user rule may override exact-content tool-name defaults, but not this
-  content-level preservation.
+- Code, diff, table, HTML, JSON, search, log, mixed, and text candidates must
+  pass their protected-fact, structure, and token-savings checks; otherwise the
+  original output remains unchanged.
 - File-backed output is read only through the trusted source boundary.
 - Every emitted marker uses the store's committed canonical key.
 - Retrieval is scoped to the current session.
@@ -321,17 +344,18 @@ The release gates are:
 8. Bun plugin initialization from the installed tarball;
 9. npm-normalized package metadata, dist-only public export targets, packed
    export presence, and conflict-copy rejection;
-10. fixed-seed performance coverage for routing, Store put/get, compression,
-    bounded retrieval, the complete plugin hook, SQLite worker-concurrent
-    writes, and SQLite cold start.
+10. fixed-seed performance coverage for cold/hot token counting, routing,
+    Store put/get, ordinary non-repetition compression, bounded retrieval, the
+    complete plugin hook, SQLite worker-concurrent writes, and SQLite cold
+    start.
 11. before publication, load the freshly installed tarball through a real
     OpenCode host rather than repository source or a stale local `dist`.
 
 `bench:perf` and the scheduled performance workflow print fixed-seed
-10/100/250 KiB memory/SQLite p50, p95, and max results. The P0 10 KiB
-memory-backed `tool.execute.after` p95 is a blocking `< 50 ms` gate. Larger
-payload and SQLite results remain non-blocking baselines until enough stable CI
-history exists to approve regression thresholds.
+10/100/250 KiB token-counter and memory/SQLite p50, p95, and max results. The P0
+10 KiB memory-backed `tool.execute.after` p95 is a blocking `< 50 ms` gate.
+Larger payload and SQLite results remain non-blocking baselines until enough
+stable CI history exists to approve regression thresholds.
 
 The current 0.2 build was host-smoked with OpenCode 1.17.13 from a temporary
 tarball installation: the host loaded the installed `dist/plugin.js` and

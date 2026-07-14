@@ -33,8 +33,8 @@
 
 - [x] Add bounded session-scoped repetition folding.
 - [x] Preserve CCR exact recovery for repeated output.
-- [ ] Run full quality, performance, build, and package gates.
-- [ ] Verify clean tarball consumer installation.
-- [ ] Verify real OpenCode host loading from the installed tarball.
-- [ ] Audit every spec criterion against authoritative evidence.
-- [ ] Review and commit documentation and task status.
+- [x] Run full quality, performance, build, and package gates.
+- [x] Verify clean tarball consumer installation.
+- [x] Verify real OpenCode host loading from the installed tarball.
+- [x] Audit every spec criterion against authoritative evidence.
+- [x] Review and commit documentation and task status.
