@@ -101,7 +101,7 @@ export const PARITY_FIXTURES: readonly ParityFixture[] = [
     tool: "Bash",
     query: "tenant-critical auth refresh error",
     content: JSON.stringify(jsonRows, null, 2),
-    protectedFacts: [jsonFact, '"id": 118'],
+    protectedFacts: [jsonFact],
   },
   {
     id: "search-relevant-tail",

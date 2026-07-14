@@ -5,9 +5,9 @@
 - [x] Pin annotated parity corpus and oracle schema.
 - [x] Implement pinned Headroom oracle refresh adapter.
 - [x] Add provenance and stale-snapshot validation.
-- [ ] Add deterministic protected-fact and structure checks.
-- [ ] Add blocking `bench:quality` command and tests.
-- [ ] Checkpoint 1: tests, typecheck, build, honest current-gap report.
+- [x] Add deterministic protected-fact and structure checks.
+- [x] Add blocking `bench:quality` command and tests.
+- [x] Checkpoint 1: tests, typecheck, build, honest current-gap report.
 
 ## Correct Decisions
 

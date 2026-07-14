@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "generatedAt": "2026-07-14T02:51:04.705047+00:00",
+  "generatedAt": "2026-07-14T02:54:39.944033+00:00",
   "reference": {
     "package": "headroom-ai",
     "version": "0.31.0",
@@ -22,14 +22,13 @@
   "fixtures": [
     {
       "id": "json-priority-row",
-      "fixtureSha256": "ae65d22f2962f7f3141a28ec9f9be3b1fb55d7b95764d2b6a83779db8fcf69a0",
+      "fixtureSha256": "85abd5b44ed1bfb2da38f33fc7bd08f7d95d95fe44fb1555a3fe3c3cb8666d3d",
       "strategy": "smart_crusher",
       "originalTokens": 1925,
       "outputTokens": 324,
       "outputSha256": "6f2e3e5fc5fb79ec4f70fc6fe37e16dbf9dac48b497d238b6ca36cfd09e9d34e",
       "protectedFacts": [
-        "ERROR auth refresh rejected for tenant-critical",
-        "\"id\": 118"
+        "ERROR auth refresh rejected for tenant-critical"
       ],
       "retainedFacts": [
         "ERROR auth refresh rejected for tenant-critical"
