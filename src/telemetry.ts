@@ -20,6 +20,7 @@ export type CompressionTelemetryReason =
   | "skip_tool"
   | "legacy_skip_tool"
   | "builtin_preserve"
+  | "read_protected"
   | "default_preserve"
   | "user_preserve"
   | "too_large"
@@ -117,6 +118,7 @@ const COMPRESSION_REASONS = [
   "skip_tool",
   "legacy_skip_tool",
   "builtin_preserve",
+  "read_protected",
   "default_preserve",
   "user_preserve",
   "too_large",

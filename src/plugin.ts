@@ -29,6 +29,7 @@ import {
   type CompressionTelemetryReason,
 } from "./telemetry.js";
 import { estimateTokens } from "./token.js";
+import { shouldPreserveRawFileRead } from "./read-protection.js";
 import { createRetrieveTool } from "./tools/retrieve.js";
 import { createStatsTool } from "./tools/stats.js";
 
@@ -363,7 +364,14 @@ export const HeadroomNativePlugin: Plugin = async (pluginInput, options = {}) =>
       };
       try {
         const displayOutput = output.output ?? "";
-        const policy = resolveToolPolicy(input.tool, config.toolPolicy);
+        const policy = shouldPreserveRawFileRead(input.args, displayOutput)
+          ? {
+              ruleId: "builtin-shell-read",
+              source: "builtin" as const,
+              action: "preserve" as const,
+              strength: config.toolPolicy.default.strength,
+            }
+          : resolveToolPolicy(input.tool, config.toolPolicy);
         const thresholdChars =
           policy.minimum === "always"
             ? 0
@@ -390,7 +398,9 @@ export const HeadroomNativePlugin: Plugin = async (pluginInput, options = {}) =>
               ...input,
               decision: "skipped",
               reason:
-                policy.source === "user"
+                policy.ruleId === "builtin-shell-read"
+                  ? "read_protected"
+                  : policy.source === "user"
                   ? "user_preserve"
                   : policy.source === "compatibility"
                     ? "legacy_skip_tool"
