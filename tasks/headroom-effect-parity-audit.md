@@ -37,6 +37,13 @@ call, or a large ML dependency.
 
 - Exact and at-least-90%-similar results fold only within one session and emit
   a bounded pointer with a canonical committed CCR hash.
+- Coding-profile shell reads from `cat`, `head`, `tail`, `sed -n`, and supported
+  wrappers now preserve source/plain-text bytes before per-output compression;
+  structured data and generated lockfiles remain eligible.
+- The native OpenCode message-transform hook performs Headroom-style contiguous
+  span folding over completed tool outputs after their final per-block form is
+  known. It supports constant line-number shifts, keeps the earliest occurrence
+  in context, and is prefix-monotonic as turns are appended.
 - `mode=full` returns the repeated call's exact bytes. A different session
   cannot match or retrieve the entry.
 - Intent, repetition, telemetry, and CCR session state are bounded and cleared
@@ -60,7 +67,7 @@ call, or a large ML dependency.
 
 ## Build, package, and real host
 
-- `bun test tests`: 192 passed, 0 failed, 0 skipped.
+- `bun test tests`: 203 passed, 0 failed, 0 skipped.
 - `bun run typecheck`, `bun run build`, `bun run lint:package`, and
   `bun run test:package` passed.
 - Package smoke rebuilt from clean state, packed 69 files, installed the

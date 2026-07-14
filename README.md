@@ -13,9 +13,9 @@ from observed behavior.
 
 The current native engine also adds effect-parity coverage for code, diffs,
 tables, HTML, and explicit mixed output; calibrated token accounting; bounded
-session intent; and same-session repeated-output folding. These deepen private
-compression behavior without adding a proxy or changing the public 0.2
-configuration surface.
+session intent; exact shell-read protection; and cross-turn span folding. These
+deepen private compression behavior without adding a proxy or changing the
+public 0.2 configuration surface.
 
 The implementation follows Headroom's routing, compression, and CCR concepts,
 but does not run the Headroom proxy or require Headroom's Python/Rust runtime.
@@ -57,9 +57,15 @@ After a tool finishes, the plugin:
    structure and protected facts survive and the calibrated counter reports
    token savings;
 6. commits the exact original and the chosen retrieve defaults to CCR;
-7. folds exact or highly similar output only when a bounded same-session match
-   exists, while committing another exactly retrievable CCR record;
-8. records local counters and latency without recording output, arguments, path
+7. keeps source and plain-text output from `cat`, `head`, `tail`, `sed -n`, and
+   equivalent wrapped shell reads byte-exact, while leaving structured data and
+   regenerable lockfiles eligible for compression;
+8. folds exact or highly similar whole output only when a bounded same-session
+   match exists, while committing another exactly retrievable CCR record;
+9. before each model request, folds repeated contiguous spans only in later
+   completed tool outputs, leaving earlier message bytes stable and supporting
+   constant line-number shifts;
+10. records local counters and latency without recording output, arguments, path
    content, or query text.
 
 The plugin registers:
@@ -69,6 +75,18 @@ The plugin registers:
 
 Normal hook failures are fail-open: the original tool output remains in place.
 The plugin does not change provider URLs, proxy traffic, or network transports.
+
+Shell-read protection is content-aware. Source code and the plain-text fallback
+remain exact because they may be patched byte-for-byte. Confident JSON, search,
+log, diff, table, and HTML output remains compressible, as do generated
+lockfiles such as `package-lock.json`, `pnpm-lock.yaml`, and `Cargo.lock`.
+
+Cross-turn span folding uses OpenCode's native message-transform hook. A later
+span is replaced only when its verbatim content is already present in an
+earlier tool output in the same request. The first occurrence stays in context;
+the compact pointer does not require CCR retrieval. The transform is
+prefix-monotonic, so appending a turn does not rewrite an earlier transformed
+prefix.
 
 ## Configuration
 
