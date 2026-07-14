@@ -1,4 +1,5 @@
 import { formatRetrieveMarker } from "../markers.js";
+import { computeOptimalK } from "../engine/adaptive-sizer.js";
 import type { CompressorInput, CompressorResult } from "./types.js";
 
 export type LogLevel =
@@ -393,11 +394,21 @@ export function compressLog(input: CompressorInput): CompressorResult {
   const selected = new Map(required);
   const fillerByScore = [...filler.values()].sort(
     (a, b) => b.score - a.score || a.index - b.index,
+  ).filter((line) => !required.has(line.index));
+  const availableFillerSlots = Math.max(
+    0,
+    profile.maxTotalLines - required.size,
   );
-  for (const line of fillerByScore) {
-    if (selected.size >= profile.maxTotalLines) {
-      break;
-    }
+  const adaptiveBias = input.profile?.adaptive?.bias ?? 1;
+  const adaptive = computeOptimalK(
+    fillerByScore.map((line) => normalizeLogLineForDedupe(line.content)),
+    {
+      bias: adaptiveBias,
+      minK: Math.min(10, availableFillerSlots, fillerByScore.length),
+      maxK: Math.min(availableFillerSlots, fillerByScore.length),
+    },
+  );
+  for (const line of fillerByScore.slice(0, adaptive.k)) {
     addLine(selected, line);
   }
 
@@ -439,6 +450,7 @@ export function compressLog(input: CompressorInput): CompressorResult {
             lines: kept.length,
             requiredLines: required.size,
             fillerLines: Math.max(0, kept.length - required.size),
+            adaptive: { ...adaptive, bias: adaptiveBias },
           },
           dropped: {
             lines: omitted,
@@ -461,6 +473,7 @@ export function compressLog(input: CompressorInput): CompressorResult {
           lines: kept.length,
           requiredLines: required.size,
           fillerLines: Math.max(0, kept.length - required.size),
+          adaptive: { ...adaptive, bias: adaptiveBias },
         },
         dropped: {
           lines: omitted,
