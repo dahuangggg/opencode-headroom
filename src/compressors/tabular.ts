@@ -1,6 +1,9 @@
 import { formatRetrieveMarker } from "../markers.js";
 import { computeOptimalK } from "../engine/adaptive-sizer.js";
-import { rankInformationItems } from "../engine/information-selector.js";
+import {
+  findNumericOutlierIndexes,
+  rankInformationItems,
+} from "../engine/information-selector.js";
 import type { CompressorInput, CompressorResult } from "./types.js";
 
 interface ParsedTable {
@@ -44,6 +47,18 @@ function words(query: string): string[] {
     .filter((word) => word.length > 2);
 }
 
+function numericRecord(row: string, delimiter: ParsedTable["delimiter"]): Record<string, number> {
+  const separator = delimiter === "markdown" ? "|" : delimiter === "csv" ? "," : "\t";
+  const record: Record<string, number> = {};
+  row.split(separator).forEach((cell, index) => {
+    const value = cell.trim();
+    if (/^-?(?:\d+\.?\d*|\.\d+)(?:e[+-]?\d+)?$/i.test(value)) {
+      record[String(index)] = Number(value);
+    }
+  });
+  return record;
+}
+
 export function compressTabular(input: CompressorInput): CompressorResult {
   const table = parseTabular(input.content);
   if (!table || table.rows.length < 20) {
@@ -69,6 +84,11 @@ export function compressTabular(input: CompressorInput): CompressorResult {
   [0, 1, table.rows.length - 2, table.rows.length - 1].forEach((index) => {
     if (index >= 0 && index < table.rows.length) required.add(index);
   });
+  for (const index of findNumericOutlierIndexes(
+    table.rows.map((row) => numericRecord(row, table.delimiter)),
+  )) {
+    required.add(index);
+  }
   const rankedFiller = rankInformationItems(table.rows, required);
   const maxRows = input.profile?.json.maxItems ?? 12;
   const availableFillerSlots = Math.max(0, maxRows - required.size);

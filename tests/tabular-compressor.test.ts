@@ -122,4 +122,16 @@ describe("tabular compressor", () => {
 
     expect(result.output).toContain(rows[37]);
   });
+
+  it("keeps a numeric outlier without severity or query keywords", () => {
+    const rows = Array.from(
+      { length: 50 },
+      (_, index) => `tenant-${index},100,ok`,
+    );
+    rows[33] = "tenant-33,5000,ok";
+    const original = ["tenant,latency_ms,status", ...rows].join("\n");
+    const result = compressTabular({ content: original, hash, query: "" });
+
+    expect(result.output).toContain(rows[33]);
+  });
 });

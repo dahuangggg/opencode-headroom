@@ -238,4 +238,22 @@ describe("JSON SmartCrusher-lite", () => {
 
     expect(parsed).toContainEqual(rows[37]);
   });
+
+  it("keeps a numeric outlier without severity or query keywords", () => {
+    const rows = Array.from({ length: 50 }, (_, index) => ({
+      id: index + 1,
+      latencyMs: 100,
+      status: "ok",
+    }));
+    rows[33] = { id: 34, latencyMs: 5000, status: "ok" };
+    const original = JSON.stringify(rows, null, 2);
+    const result = compressJson({
+      content: original,
+      hash: createContentHash(original),
+      query: "",
+    });
+    const parsed = JSON.parse(result.output) as Array<Record<string, unknown>>;
+
+    expect(parsed).toContainEqual(rows[33]);
+  });
 });

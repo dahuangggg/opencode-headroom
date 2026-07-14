@@ -3,7 +3,10 @@ import {
   computeOptimalK,
   type AdaptiveSizingDecision,
 } from "../engine/adaptive-sizer.js";
-import { rankInformationItems } from "../engine/information-selector.js";
+import {
+  findNumericOutlierIndexes,
+  rankInformationItems,
+} from "../engine/information-selector.js";
 import type { CompressorInput, CompressorResult } from "./types.js";
 
 const PRIORITY_RE =
@@ -71,6 +74,14 @@ function summarizeArray(
       required.add(index);
     }
   });
+  const numericRecords = rows.map((row) =>
+    row && typeof row === "object" && !Array.isArray(row)
+      ? row as Record<string, unknown>
+      : {},
+  );
+  for (const index of findNumericOutlierIndexes(numericRecords)) {
+    required.add(index);
+  }
 
   const serializedRows = rows.map(serializeForInformation);
   const rankedFiller = rankInformationItems(serializedRows, required);

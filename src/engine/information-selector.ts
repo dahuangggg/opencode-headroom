@@ -57,6 +57,46 @@ export function rankInformationItems(
   });
 }
 
+export function findNumericOutlierIndexes(
+  records: readonly Readonly<Record<string, unknown>>[],
+  zScoreThreshold = 3,
+): Set<number> {
+  const columns = new Map<string, Array<readonly [index: number, value: number]>>();
+  records.forEach((record, index) => {
+    for (const [field, value] of Object.entries(record)) {
+      if (typeof value !== "number" || !Number.isFinite(value)) {
+        continue;
+      }
+      const values = columns.get(field) ?? [];
+      values.push([index, value]);
+      columns.set(field, values);
+    }
+  });
+
+  const outliers = new Set<number>();
+  for (const values of columns.values()) {
+    if (values.length < 5) {
+      continue;
+    }
+    const mean = values.reduce((sum, [, value]) => sum + value, 0) / values.length;
+    const variance = values.reduce(
+      (sum, [, value]) => sum + (value - mean) ** 2,
+      0,
+    ) / values.length;
+    const standardDeviation = Math.sqrt(variance);
+    if (standardDeviation === 0) {
+      continue;
+    }
+    for (const [index, value] of values) {
+      if (Math.abs(value - mean) / standardDeviation >= zScoreThreshold) {
+        outliers.add(index);
+      }
+    }
+  }
+
+  return outliers;
+}
+
 function informationTokens(value: string): Set<string> {
   const normalized = value.toLowerCase().replace(/\p{N}+/gu, "N");
   return new Set(
