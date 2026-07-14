@@ -23,7 +23,7 @@
 
 - [x] Add multi-stage candidate pipeline and protected-fact gate.
 - [x] Add code-aware compression.
-- [ ] Add diff compression.
+- [x] Add diff compression.
 - [ ] Add tabular compression.
 - [ ] Add HTML extraction/compression.
 - [ ] Route new strategies inside explicit mixed sections.

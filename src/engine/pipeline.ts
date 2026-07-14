@@ -62,6 +62,21 @@ export function extractProtectedFacts(
             PROTECTED_LINE_RE.test(line)),
       );
   }
+  if (kind === "diff") {
+    return content
+      .split(/\r?\n/)
+      .filter(
+        (line) =>
+          line.startsWith("diff --git ") ||
+          line.startsWith("diff --cc ") ||
+          line.startsWith("diff --combined ") ||
+          line.startsWith("--- ") ||
+          line.startsWith("+++ ") ||
+          line.startsWith("@@ ") ||
+          (line.startsWith("+") && !line.startsWith("+++")) ||
+          (line.startsWith("-") && !line.startsWith("---")),
+      );
+  }
   return content
     .split(/\r?\n/)
     .map((line) => line.trim())

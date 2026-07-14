@@ -1,4 +1,5 @@
 import { compressCode } from "../compressors/code.js";
+import { compressDiff } from "../compressors/diff.js";
 import { compressJson } from "../compressors/json.js";
 import { compressLog } from "../compressors/log.js";
 import { compressSearch } from "../compressors/search.js";
@@ -349,21 +350,7 @@ export function compressByContentType(input: CompressorInput): CompressorResult 
   }
 
   if (detection.kind === "diff") {
-    return attachRouterDebug({
-      changed: false,
-      output: input.content,
-      strategy: "diff",
-      reason: "diff_passthrough",
-      debug: {
-        compressor: {
-          strategy: "diff",
-          originalChars: input.content.length,
-          compressedChars: input.content.length,
-          kept: {},
-          dropped: {},
-        },
-      },
-    });
+    return attachRouterDebug(compressDiff({ ...input, content: routed.payload }));
   }
   if (detection.kind === "json") {
     return attachRouterDebug(compressJson({ ...input, content: routed.payload }));

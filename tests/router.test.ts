@@ -219,7 +219,7 @@ describe("content router detection", () => {
         expect.objectContaining({
           tag: "stderr",
           changed: false,
-          reason: "diff_passthrough",
+          reason: "too_few_lines",
         }),
       ]),
     );
