@@ -27,7 +27,7 @@ describe("CompressionDecisionCache", () => {
     };
     const key = createCompressionDecisionKey(base);
 
-    expect(key).toStartWith("compression-decision:v1:");
+    expect(key).toMatch(/^compression-decision:v1:/);
     expect(
       createCompressionDecisionKey({ ...base, strength: "balanced" }),
     ).toBe(key);
