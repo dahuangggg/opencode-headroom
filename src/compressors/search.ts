@@ -1,4 +1,5 @@
 import { formatRetrieveMarker } from "../markers.js";
+import { computeOptimalK } from "../engine/adaptive-sizer.js";
 import type { CompressorInput, CompressorResult } from "./types.js";
 
 export interface SearchMatch {
@@ -184,15 +185,22 @@ export function compressSearch(input: CompressorInput): CompressorResult {
         (fileRank.get(b.file) ?? Number.MAX_SAFE_INTEGER) ||
       a.lineNumber - b.lineNumber,
   );
-  for (const match of filler) {
-    if (selected.length >= maxMatches) {
-      break;
-    }
-    const key = `${match.file}:${match.lineNumber}`;
-    if (!selectedKeys.has(key)) {
-      selected.push(match);
-      selectedKeys.add(key);
-    }
+  const eligibleFiller = filler.filter(
+    (match) => !selectedKeys.has(`${match.file}:${match.lineNumber}`),
+  );
+  const availableFillerSlots = Math.max(0, maxMatches - required.size);
+  const adaptiveBias = input.profile?.adaptive?.bias ?? 1;
+  const adaptive = computeOptimalK(
+    eligibleFiller.map((match) => match.content),
+    {
+      bias: adaptiveBias,
+      minK: Math.min(5, availableFillerSlots, eligibleFiller.length),
+      maxK: Math.min(availableFillerSlots, eligibleFiller.length),
+    },
+  );
+  for (const match of eligibleFiller.slice(0, adaptive.k)) {
+    selected.push(match);
+    selectedKeys.add(`${match.file}:${match.lineNumber}`);
   }
 
   selected.sort(
@@ -240,6 +248,7 @@ export function compressSearch(input: CompressorInput): CompressorResult {
             requiredMatches: required.size,
             fillerMatches: Math.max(0, selected.length - required.size),
             files: new Set(selected.map((match) => match.file)).size,
+            adaptive: { ...adaptive, bias: adaptiveBias },
           },
           dropped: {
             matches: Math.max(0, matches.length - selected.length),
@@ -264,6 +273,7 @@ export function compressSearch(input: CompressorInput): CompressorResult {
           requiredMatches: required.size,
           fillerMatches: Math.max(0, selected.length - required.size),
           files: new Set(selected.map((match) => match.file)).size,
+          adaptive: { ...adaptive, bias: adaptiveBias },
         },
         dropped: {
           matches: Math.max(0, matches.length - selected.length),
