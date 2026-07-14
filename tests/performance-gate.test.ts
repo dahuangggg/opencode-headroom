@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   assertP0HookLatency,
+  assertP0MessageTransformLatency,
   assertTokenizerPerformanceReported,
   type PerformanceResultRow,
 } from "../benchmarks/performance.js";
@@ -15,6 +16,13 @@ function hookResult(p95: number): PerformanceResultRow {
   };
 }
 
+function messageTransformResult(p95: number): PerformanceResultRow {
+  return {
+    ...hookResult(p95),
+    operation: "plugin.messages.transform",
+  };
+}
+
 describe("performance release gate", () => {
   it("keeps the P0 memory hook p95 strictly below 50ms", () => {
     expect(() => assertP0HookLatency([hookResult(49.999)])).not.toThrow();
@@ -25,6 +33,18 @@ describe("performance release gate", () => {
 
   it("fails closed when the P0 hook result is missing", () => {
     expect(() => assertP0HookLatency([])).toThrow(/missing P0/i);
+  });
+
+  it("keeps the P0 Read lifecycle transform p95 strictly below 50ms", () => {
+    expect(() =>
+      assertP0MessageTransformLatency([messageTransformResult(49.999)]),
+    ).not.toThrow();
+    expect(() =>
+      assertP0MessageTransformLatency([messageTransformResult(50)]),
+    ).toThrow(/Read lifecycle.*p95.*50 ms/i);
+    expect(() => assertP0MessageTransformLatency([])).toThrow(
+      /missing P0 Read lifecycle/i,
+    );
   });
 
   it("requires separate cold and hot token-counter rows", () => {

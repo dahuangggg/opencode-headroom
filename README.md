@@ -14,8 +14,8 @@ from observed behavior.
 The current native engine also adds effect-parity coverage for code, diffs,
 tables, HTML, and explicit mixed output; calibrated token accounting; bounded
 session intent; exact shell-read protection; reversible lossless-first folds;
-and cross-turn span folding. These deepen compression behavior without adding
-a proxy.
+stale/superseded Read lifecycle management; and cross-turn span folding. These
+deepen compression behavior without adding a proxy.
 
 The implementation follows Headroom's routing, compression, and CCR concepts,
 but does not run the Headroom proxy or require Headroom's Python/Rust runtime.
@@ -75,10 +75,12 @@ After a tool finishes, the plugin:
    regenerable lockfiles eligible for compression;
 9. folds exact or highly similar whole output only when a bounded same-session
    match exists, while committing another exactly retrievable CCR record;
-10. before each model request, folds repeated contiguous spans only in later
+10. before each model request, replaces an uncached old `Read` only when a
+   later write made it stale or a later `Read` fully covered its range;
+11. folds repeated contiguous spans only in later
    completed tool outputs, leaving earlier message bytes stable and supporting
    constant line-number shifts;
-11. records local counters and latency without recording output, arguments, path
+12. records local counters and latency without recording output, arguments, path
    content, or query text.
 
 The plugin registers:
@@ -100,6 +102,17 @@ earlier tool output in the same request. The first occurrence stays in context;
 the compact pointer does not require CCR retrieval. The transform is
 prefix-monotonic, so appending a turn does not rewrite an earlier transformed
 prefix.
+
+Read lifecycle management runs before span folding under the `coding` profile.
+It derives `Read`, `Edit`, and `Write` history from completed OpenCode tool
+parts. An old Read becomes stale after a later write to the same normalized
+path, or superseded when a later Read fully covers its original offset/limit.
+Fresh and partially overlapping Reads remain byte-exact. The entire prefix
+through the latest explicit cache-control marker is frozen. Every replacement
+uses a canonical CCR hash, and Store failures leave the original untouched.
+The pass scans at most 10,000 relevant operations per request; larger histories
+are left entirely unchanged instead of being classified from a partial scan.
+Set `readLifecycle` to `false` to disable this pass.
 
 ## Configuration
 
@@ -125,14 +138,15 @@ prefix.
 | `debugLevel` | `"summary"` | `summary` or `trace`. |
 | `debugSink` | `"metadata"` | `metadata`, `file`, or `both`. |
 | `debugPath` | `.headroom/debug.ndjson` | Worktree-relative debug file path. |
+| `readLifecycle` | profile default (`true` for `coding`) | Replace uncached stale or fully superseded OpenCode Read results before model requests. |
 
 Invalid enums, empty selectors, non-positive limits, and incompatible preserve
 rules fail during plugin initialization.
 
 Use `"profile": "legacy"` to restore the earlier `2000` token / `8000`
-character activation thresholds and disable the lossless-first stage without
-changing any tool policies. Explicit thresholds still override either
-profile's activation values.
+character activation thresholds and disable the lossless-first and Read
+lifecycle stages without changing any tool policies. Explicit thresholds and
+an explicit `readLifecycle` value still override profile defaults.
 
 The lossless-first stage follows Headroom's format-native approach. Consecutive
 identical log/text rows become a counted repeat marker, and grep rows use
@@ -278,10 +292,11 @@ limit is reached, the oldest active entries are evicted first. SQLite uses
 
 When OpenCode emits `session.deleted`, the plugin deletes that session's CCR
 entries, latest-user-intent state, repetition fingerprints, and per-session
-telemetry. Process-global historical telemetry remains until the plugin is
-disposed. The plugin's `dispose` hook clears bounded session state and closes
-the store; SQLite close is idempotent. Repetition state stores bounded hashes
-and line fingerprints, not raw tool output; exact bytes remain owned by CCR.
+telemetry, plus cached Read-lifecycle hash/digest references. Process-global
+historical telemetry remains until the plugin is disposed. The plugin's
+`dispose` hook clears bounded session state and closes the store; SQLite close
+is idempotent. Repetition and Read-lifecycle state store bounded fingerprints,
+hashes, and digests, not raw tool output; exact bytes remain owned by CCR.
 
 ### SQLite schema v2
 
@@ -460,10 +475,11 @@ facts, rather than every routine file, remain mandatory. `bench:check` is determ
 rewrite the tracked cost report; `bench:report` is the explicit report writer.
 `bench:perf` reports calibrated token counting cold/hot paths separately and
 measures fixed-seed router, Store put/get, ordinary non-repetition compression,
-bounded retrieval, complete plugin-hook, SQLite worker-concurrent writes, and
-cold-start p50/p95/max results without writing a report. It blocks only when
-the P0 10 KiB memory-backed `tool.execute.after` p95 is not below 50 ms; the
-larger and SQLite rows remain reviewed baselines.
+bounded retrieval, complete tool and message-transform hooks, SQLite
+worker-concurrent writes, and cold-start p50/p95/max results without writing a
+report. It blocks when either P0 10 KiB memory-backed `tool.execute.after` or
+Read-lifecycle `messages.transform` p95 is not below 50 ms; the larger and
+SQLite rows remain reviewed baselines.
 `lint:package` checks npm-normalized manifest metadata, self-dependencies,
 public export paths, packed export targets, and conflict-copy files. The
 package smoke removes `dist`, packs from a clean state, validates

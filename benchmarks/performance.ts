@@ -37,6 +37,7 @@ type Operation =
   | "engine.compress"
   | "engine.retrieve(query)"
   | "plugin.tool.execute.after"
+  | "plugin.messages.transform"
   | "store.put(concurrent-workers=4)"
   | "store.cold-start";
 
@@ -54,6 +55,7 @@ const TTL_MS = 60 * 60 * 1000;
 const QUERY = "benchmark needle validation failed";
 const SQLITE_CONNECTIONS = 4;
 const P0_HOOK_MAX_P95_MS = 50;
+const P0_MESSAGE_TRANSFORM_MAX_P95_MS = 50;
 const TARGETS = [
   { label: "10KiB", bytes: 10 * 1024 },
   { label: "100KiB", bytes: 100 * 1024 },
@@ -413,6 +415,91 @@ async function benchmarkPluginHook(
   }
 }
 
+function completedPerformanceTool(input: {
+  tool: "Read" | "Edit";
+  sessionID: string;
+  callID: string;
+  filePath: string;
+  output: string;
+}) {
+  return {
+    id: `${input.callID}-part`,
+    sessionID: input.sessionID,
+    messageID: `${input.callID}-message`,
+    type: "tool",
+    callID: input.callID,
+    tool: input.tool,
+    state: {
+      status: "completed",
+      input: { filePath: input.filePath },
+      output: input.output,
+      title: input.tool,
+      metadata: {},
+      time: { start: 1, end: 2 },
+    },
+  };
+}
+
+async function benchmarkPluginMessageTransform(
+  backend: StoreBackend,
+  payload: PayloadCase,
+): Promise<PerformanceResultRow> {
+  const directory = await mkdtemp(
+    join(tmpdir(), "opencode-headroom-message-perf-"),
+  );
+  const plugin = await HeadroomNativePlugin(pluginInput(directory), {
+    storage: {
+      kind: backend,
+      path: join(directory, "messages.sqlite"),
+    },
+  });
+
+  try {
+    const transform = plugin["experimental.chat.messages.transform"];
+    if (!transform) {
+      throw new Error("plugin did not register messages.transform");
+    }
+    const distribution = await measure(async (iteration) => {
+      const sessionID = `perf-messages-${backend}-${payload.label}-${iteration}`;
+      const read = completedPerformanceTool({
+        tool: "Read",
+        sessionID,
+        callID: `read-${iteration}`,
+        filePath: "src/performance.ts",
+        output: payload.content,
+      });
+      const edit = completedPerformanceTool({
+        tool: "Edit",
+        sessionID,
+        callID: `edit-${iteration}`,
+        filePath: "src/performance.ts",
+        output: "Done",
+      });
+      await transform(
+        {},
+        {
+          messages: [
+            { info: {}, parts: [read] },
+            { info: {}, parts: [edit] },
+          ],
+        } as never,
+      );
+      if (!read.state.output.includes("is stale after a later write")) {
+        throw new Error(`${backend}/${payload.label} Read lifecycle did not fold`);
+      }
+    });
+    return {
+      backend,
+      payload,
+      operation: "plugin.messages.transform",
+      distribution,
+    };
+  } finally {
+    await plugin.dispose?.();
+    await rm(directory, { recursive: true, force: true });
+  }
+}
+
 async function benchmarkSQLiteConcurrentPut(
   payload: PayloadCase,
 ): Promise<PerformanceResultRow> {
@@ -511,6 +598,26 @@ export function assertP0HookLatency(
   return p0;
 }
 
+export function assertP0MessageTransformLatency(
+  results: PerformanceResultRow[],
+): PerformanceResultRow {
+  const p0 = results.find(
+    (result) =>
+      result.backend === "memory" &&
+      result.payload.label === "10KiB" &&
+      result.operation === "plugin.messages.transform",
+  );
+  if (!p0) {
+    throw new Error("missing P0 Read lifecycle message-transform result");
+  }
+  if (!(p0.distribution.p95 < P0_MESSAGE_TRANSFORM_MAX_P95_MS)) {
+    throw new Error(
+      `Read lifecycle P0 p95 ${p0.distribution.p95.toFixed(3)} ms must be below ${P0_MESSAGE_TRANSFORM_MAX_P95_MS} ms`,
+    );
+  }
+  return p0;
+}
+
 export function assertTokenizerPerformanceReported(
   results: PerformanceResultRow[],
 ): void {
@@ -538,6 +645,7 @@ async function main(): Promise<void> {
     for (const payload of payloads) {
       results.push(...(await benchmarkStoreAndEngine(backend, payload)));
       results.push(await benchmarkPluginHook(backend, payload));
+      results.push(await benchmarkPluginMessageTransform(backend, payload));
     }
   }
   for (const payload of payloads) {
@@ -562,9 +670,13 @@ async function main(): Promise<void> {
   }
 
   const p0 = assertP0HookLatency(results);
+  const messageP0 = assertP0MessageTransformLatency(results);
   assertTokenizerPerformanceReported(results);
   console.log(
     `P0 gate passed: memory 10KiB plugin.tool.execute.after p95=${milliseconds(p0.distribution.p95)}ms < ${P0_HOOK_MAX_P95_MS}ms`,
+  );
+  console.log(
+    `P0 gate passed: memory 10KiB plugin.messages.transform p95=${milliseconds(messageP0.distribution.p95)}ms < ${P0_MESSAGE_TRANSFORM_MAX_P95_MS}ms`,
   );
   console.log(
     "SQLite concurrent-worker and cold-start rows are recorded baselines, not blocking thresholds.",

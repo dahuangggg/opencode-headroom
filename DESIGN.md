@@ -14,10 +14,10 @@ The package has two public entry points:
   `HeadroomNativePlugin`, plus public engine and store types;
 - `@dahuangggg/opencode-headroom/plugin` exports the plugin implementation directly.
 
-Version 0.2 adds four deep boundaries around the native engine: deterministic
-tool policy, trusted file-backed output, bounded CCR lifecycle, and local
-telemetry. Each boundary has a small public interface and can change internally
-without rewriting the OpenCode hook.
+Version 0.2 adds five deep boundaries around the native engine: deterministic
+tool policy, trusted file-backed output, bounded CCR lifecycle, Read lifecycle,
+and local telemetry. Each boundary has a small public interface and can change
+internally without rewriting the OpenCode hook.
 
 ## Runtime flow
 
@@ -37,7 +37,8 @@ OpenCode tool result
 
 headroom_retrieve -> session-scoped CCR get -> bounded view or explicit full
 headroom_stats    -> CCR stats + global/session telemetry snapshot
-session.deleted   -> delete session CCR rows + intent/repetition/telemetry state
+messages.transform -> stale/superseded Read CCR fold -> repeated-span fold
+session.deleted   -> delete CCR rows + intent/repetition/Read/telemetry state
 dispose           -> clear session state + close the active CCR adapter
 ```
 
@@ -55,6 +56,7 @@ or Bun-backed persistent adapter failure is surfaced during plugin startup.
 - resolves policy before any file-backed output read;
 - converts hook input into the engine interface;
 - registers `headroom_retrieve` and `headroom_stats`;
+- applies Read lifecycle before repeated-span folding in the message transform;
 - attaches compact `output.metadata.headroom` data;
 - handles session deletion and plugin disposal;
 - records safe local telemetry and optional debug traces.
@@ -67,6 +69,11 @@ checks remain behind their own modules.
 `src/config.ts` validates all public limits and enums at initialization.
 `src/policy.ts` compiles tool patterns once and resolves a pure,
 telemetry-independent `ResolvedToolPolicy` for each tool.
+
+The `coding` profile enables Read lifecycle by default; `legacy` disables it.
+An explicit boolean `readLifecycle` value overrides either profile. This pass
+is independent of per-tool compression policy because it acts only after a
+later operation proves an old Read stale or fully superseded.
 
 Resolution order is part of the 0.2 contract:
 
@@ -207,6 +214,28 @@ through the canonical Store commit and `mode=full` returns the new call's exact
 bytes. Matches cannot cross sessions, expire with their owning entry, and are
 removed on session deletion or disposal.
 
+### Read lifecycle
+
+`ReadLifecycleManager` scans completed OpenCode tool parts before each model
+request. It normalizes `filePath`, `file_path`, or `path` against the worktree
+and classifies an earlier Read as stale after a later write, or superseded only
+when a later Read fully covers its offset/limit range. Fresh and partially
+overlapping reads remain byte-exact.
+
+The scan is bounded to 10,000 relevant operations. If that limit is exceeded,
+the entire lifecycle pass fails open for the request; it never classifies or
+rewrites a partial history. Marker paths are display-only and have Unicode
+control and formatting characters removed before they enter model context.
+
+The latest explicit cache-control marker freezes its complete message prefix;
+no lifecycle replacement is allowed at or before it. Eligible originals enter
+CCR before mutation, and the manager replays only bounded callID-to-hash/digest
+state. A non-counting Store `peek` verifies that a cached hash remains live;
+an evicted entry is committed again before its marker is emitted. Store or
+classification failures are fail-open. The lifecycle pass runs before
+prefix-monotonic span folding so a fresh latest Read remains available as the
+model's source of truth.
+
 ### Canonical CCR commit
 
 The engine never treats its preliminary content hash as committed. `CCRStore`
@@ -225,8 +254,11 @@ continues to apply after restart when SQLite is used.
 
 ## Storage and lifecycle
 
-`CCRStore` exposes `put`, session-scoped `get`, `deleteSession`, `stats`,
-`pruneExpired`, and idempotent `close`. Both adapters share these semantics:
+`CCRStore` exposes `put`, counted session-scoped `get`, `deleteSession`,
+`stats`, `pruneExpired`, and idempotent `close`. It optionally exposes a
+non-counting session-scoped `peek`; both built-in adapters implement it so
+internal lifecycle validation does not alter model retrieval statistics. Both
+adapters share these semantics:
 
 - TTL is checked before retrieval and statistics;
 - capacity defaults to 10000 active entries;
@@ -333,6 +365,10 @@ fail-open.
   original output remains unchanged.
 - File-backed output is read only through the trusted source boundary.
 - Every emitted marker uses the store's committed canonical key.
+- Read lifecycle never rewrites the explicit cache-controlled prefix and never
+  emits a marker until its CCR entry is confirmed live.
+- Read lifecycle leaves an over-limit operation history unchanged and removes
+  control/formatting characters from display paths in its markers.
 - Retrieval is scoped to the current session.
 - TTL, capacity, session deletion, and store close are consistent across memory
   and SQLite adapters.
@@ -385,16 +421,17 @@ The release gates are:
    export presence, and conflict-copy rejection;
 10. fixed-seed performance coverage for cold/hot token counting, routing,
     Store put/get, ordinary non-repetition compression, bounded retrieval, the
-    complete plugin hook, SQLite worker-concurrent writes, and SQLite cold
-    start.
+    complete tool/message-transform hooks, SQLite worker-concurrent writes, and
+    SQLite cold start.
 11. before publication, load the freshly installed tarball through a real
     OpenCode host rather than repository source or a stale local `dist`.
 
 `bench:perf` and the scheduled performance workflow print fixed-seed
 10/100/250 KiB token-counter and memory/SQLite p50, p95, and max results. The P0
-10 KiB memory-backed `tool.execute.after` p95 is a blocking `< 50 ms` gate.
-Larger payload and SQLite results remain non-blocking baselines until enough
-stable CI history exists to approve regression thresholds.
+10 KiB memory-backed `tool.execute.after` and Read-lifecycle
+`messages.transform` p95 values are blocking `< 50 ms` gates. Larger payload
+and SQLite results remain non-blocking baselines until enough stable CI history
+exists to approve regression thresholds.
 
 The current 0.2 build was host-smoked with OpenCode 1.17.13 from a temporary
 tarball installation: the host loaded the installed `dist/plugin.js` and

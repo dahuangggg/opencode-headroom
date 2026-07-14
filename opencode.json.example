@@ -6,6 +6,7 @@
       {
         "engine": "native",
         "profile": "coding",
+        "readLifecycle": true,
         "ttlHours": 24,
         "storage": {
           "kind": "auto",
