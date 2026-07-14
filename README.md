@@ -125,10 +125,13 @@ profile's activation values.
 
 The lossless-first stage follows Headroom's format-native approach. Consecutive
 identical log/text rows become a counted repeat marker, and grep rows use
-ripgrep heading form so repeated paths are printed once. Every transform is
-round-trip checked at runtime and adopted only when its inverse reproduces the
-exact input and the result is smaller. The lossy candidate is still validated
-against the original, not merely against the folded intermediate result.
+ripgrep heading form so repeated paths are printed once. Homogeneous JSON arrays
+of scalar records use a compact table encoding when it saves at least 30%.
+Line transforms reproduce the exact bytes; JSON tables reproduce every value,
+type, field, and row in order. Each transform is round-trip checked before use,
+and the exact original remains the CCR source of truth. The lossy candidate is
+still validated against the original, not merely against the folded
+intermediate result.
 
 Search, log, JSON-array, and tabular compression use Headroom-style adaptive
 information sizing after priority selection. Repetitive filler reaches its

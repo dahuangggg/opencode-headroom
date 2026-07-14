@@ -149,13 +149,15 @@ view, is offered to CCR.
 The public `coding` profile is the default and uses Headroom's 25-token and
 25-character activation thresholds. It also enables the lossless-first stage:
 repeated log/text rows use counted run folding and grep rows use ripgrep heading
-form. Both transforms have exact inverses and are accepted only after a runtime
-round-trip check. The type compressor then runs on the folded form; if its
-candidate fails or saves nothing, the reversible fold remains the floor. Final
-structure, protected-fact, and token gates compare against the original routed
-payload. `legacy` restores the plugin's earlier 2000-token and 8000-character
-thresholds and disables this stage. Explicit threshold options override either
-profile's activation values.
+form. Homogeneous scalar-record JSON arrays use a schema-header table encoding
+when the semantic round trip is exact and byte savings reach 30%. Line folds
+have byte-exact inverses; JSON tables preserve values, types, field order, and
+row order. The type compressor then runs on the folded form; if its candidate
+fails or saves nothing, the verified fold remains the floor. Final structure,
+protected-fact, and token gates compare against the original routed payload.
+`legacy` restores the plugin's earlier 2000-token and 8000-character thresholds
+and disables this stage. Explicit threshold options override either profile's
+activation values.
 
 `conservative`, `balanced`, and `aggressive` map to private per-compressor
 budgets. The public policy does not expose row counts, scoring weights, stack
