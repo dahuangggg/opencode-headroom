@@ -71,4 +71,25 @@ describe("compression candidate gate", () => {
       gateCompressionCandidate({ original, candidate, kind: "json" }),
     ).toMatchObject({ accepted: true });
   });
+
+  it("protects the salient sentence instead of an entire long prose line", () => {
+    const protectedSentence =
+      "Security warning: long-line credential validation failed.";
+    const original = [
+      protectedSentence,
+      ...Array.from(
+        { length: 40 },
+        (_, index) => `Routine sentence ${index} carries stable filler.`,
+      ),
+    ].join(" ");
+    const candidate = `${protectedSentence}\nRoutine sentence 39 carries stable filler.`;
+
+    expect(
+      gateCompressionCandidate({
+        original,
+        candidate,
+        kind: "text",
+      }),
+    ).toMatchObject({ accepted: true });
+  });
 });

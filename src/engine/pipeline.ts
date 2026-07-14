@@ -1,4 +1,5 @@
 import type { ContentKind } from "../compressors/types.js";
+import { splitTextSegments } from "../compressors/text.js";
 import { estimateTokens } from "../token.js";
 
 export type CandidateRejectionReason =
@@ -98,6 +99,11 @@ export function extractProtectedFacts(
       if (text && PROTECTED_LINE_RE.test(text)) facts.push(text);
     }
     return [...new Set(facts)];
+  }
+  if (kind === "text") {
+    return splitTextSegments(content).filter((segment) =>
+      PROTECTED_LINE_RE.test(segment),
+    );
   }
   return content
     .split(/\r?\n/)
