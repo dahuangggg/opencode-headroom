@@ -130,6 +130,15 @@ round-trip checked at runtime and adopted only when its inverse reproduces the
 exact input and the result is smaller. The lossy candidate is still validated
 against the original, not merely against the folded intermediate result.
 
+Search and log compression use Headroom-style adaptive information sizing after
+priority selection. Repetitive filler reaches its information-saturation point
+sooner, while diverse filler retains more rows. Strength-specific row budgets
+remain safety ceilings: required search matches and selected log errors,
+failures, stack traces, and summaries do not spend the adaptive filler budget.
+When debug output is enabled, the compressor summary records the selected `k`,
+diversity, unique-group count, bias, knee, and zlib adjustment without recording
+the analyzed content or query.
+
 ## Deterministic tool policy
 
 `toolPolicy.rules` is the user extension point for tool-specific behavior:

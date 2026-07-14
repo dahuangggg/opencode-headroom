@@ -87,7 +87,7 @@ export function computeUniqueBigramCurve(
   const curve: number[] = [];
 
   for (const item of items) {
-    const normalized = item.toLocaleLowerCase();
+    const normalized = item.toLowerCase();
     const words = normalized.trim().split(/\s+/u).filter(Boolean);
     const characters = [...normalized];
 
@@ -162,7 +162,7 @@ function countUniqueSimhash(items: readonly string[]): number {
 }
 
 function simhash(value: string): Fingerprint {
-  const characters = [...value.toLocaleLowerCase()];
+  const characters = [...value.toLowerCase()];
   const gramCount = Math.max(1, characters.length - 3);
   const votes = new Int32Array(64);
 
