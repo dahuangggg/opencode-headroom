@@ -28,7 +28,7 @@ describe("search compressor", () => {
 
     expect(result.changed).toBe(true);
     expect(result.output).toContain("src/auth.ts:35:ERROR auth token rejected");
-    expect(result.output).toContain("[... and");
+    expect(result.output).toContain("[omitted:");
     expect(result.output).toContain(`[Retrieve more: hash=${hash}]`);
     expect(result.output.length).toBeLessThan(original.length * 0.3);
   });
@@ -128,12 +128,12 @@ describe("search compressor", () => {
       query: "",
     });
     const summarizedOmissions = [...result.output.matchAll(
-      /\[\.\.\. and (\d+) more matches in [^\]]+\]/g,
+      /(?:\[omitted:\s*|;\s*)(\d+)@[^;\]]+/g,
     )].reduce((total, match) => total + Number(match[1]), 0);
 
     expect(result.changed).toBe(true);
     expect(result.output).toContain(
-      "[... and 2 more matches in src/file16.ts]",
+      "2@src/file16.ts",
     );
     expect(summarizedOmissions).toBe(
       result.debug?.compressor?.dropped.matches,

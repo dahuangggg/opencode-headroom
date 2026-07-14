@@ -185,7 +185,7 @@ export function compressSearch(input: CompressorInput): CompressorResult {
   for (const [file, fileMatches] of byFile) {
     const omitted = fileMatches.length - (selectedByFile.get(file) ?? 0);
     if (omitted > 0) {
-      summaries.push(`[... and ${omitted} more matches in ${file}]`);
+      summaries.push(`${omitted}@${file}`);
     }
   }
   const selections = selected.slice(0, 50).map((match) => {
@@ -199,7 +199,7 @@ export function compressSearch(input: CompressorInput): CompressorResult {
   const output = [
     ...selected
       .map((match) => `${match.file}:${match.lineNumber}:${match.content}`),
-    ...summaries,
+    ...(summaries.length ? [`[omitted: ${summaries.join("; ")}]`] : []),
     formatRetrieveMarker(input.hash),
   ].join("\n");
 
