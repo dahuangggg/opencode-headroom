@@ -22,6 +22,10 @@ describe("Headroom parity oracle", () => {
       PARITY_FIXTURES.map((fixture) => fixture.id),
     );
     expect(() => validateParityOracle(oracle, PARITY_FIXTURES)).not.toThrow();
+    expect(
+      oracle.fixtures.find((fixture) => fixture.id === "mixed-stdout-stderr")
+        ?.structureValid,
+    ).toBe(false);
   });
 
   it("rejects fixture drift instead of silently comparing stale data", async () => {

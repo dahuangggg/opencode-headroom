@@ -27,7 +27,7 @@
 - [x] Add tabular compression.
 - [x] Add HTML extraction/compression.
 - [x] Route new strategies inside explicit mixed sections.
-- [ ] Checkpoint 3: every content type meets recall and parity thresholds.
+- [x] Checkpoint 3: every content type meets recall and parity thresholds.
 
 ## Multi-turn and Delivery
 

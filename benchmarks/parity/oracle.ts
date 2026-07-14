@@ -93,6 +93,7 @@ export function validateParityOracle(
       !Number.isInteger(baseline.outputTokens) ||
       baseline.outputTokens <= 0 ||
       !/^[a-f0-9]{64}$/.test(baseline.outputSha256) ||
+      typeof baseline.structureValid !== "boolean" ||
       !Array.isArray(baseline.retainedFacts)
     ) {
       throw new Error(`Headroom oracle fixture result is incomplete: ${fixture.id}`);

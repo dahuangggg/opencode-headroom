@@ -25,6 +25,7 @@ export interface ParityOracleFixture {
   originalTokens: number;
   outputTokens: number;
   outputSha256: string;
+  structureValid: boolean;
   protectedFacts: string[];
   retainedFacts: string[];
 }

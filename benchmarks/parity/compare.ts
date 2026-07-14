@@ -79,7 +79,10 @@ function headroomIsFactSafe(
   fixture: ParityFixture,
   baseline: ParityOracleSnapshot["fixtures"][number],
 ): boolean {
-  return fixture.protectedFacts.every((fact) => baseline.retainedFacts.includes(fact));
+  return (
+    baseline.structureValid &&
+    fixture.protectedFacts.every((fact) => baseline.retainedFacts.includes(fact))
+  );
 }
 
 function normalizedLocalOutputTokens(
