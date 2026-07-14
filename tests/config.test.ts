@@ -23,6 +23,7 @@ describe("normalizeConfig", () => {
     expect(config.debugLevel).toBe("summary");
     expect(config.debugSink).toBe("metadata");
     expect(config.debugPath).toBe(".headroom/debug.ndjson");
+    expect(config.readLifecycle).toBe(true);
   });
 
   it("keeps the previous thresholds behind the legacy profile", () => {
@@ -31,6 +32,17 @@ describe("normalizeConfig", () => {
     expect(config.profile).toBe("legacy");
     expect(config.thresholdTokens).toBe(2000);
     expect(config.thresholdChars).toBe(8000);
+    expect(config.readLifecycle).toBe(false);
+  });
+
+  it("allows Read lifecycle behavior to be overridden explicitly", () => {
+    expect(normalizeConfig({ readLifecycle: false }).readLifecycle).toBe(false);
+    expect(
+      normalizeConfig({ profile: "legacy", readLifecycle: true }).readLifecycle,
+    ).toBe(true);
+    expect(() => normalizeConfig({ readLifecycle: "yes" as never })).toThrow(
+      /readLifecycle must be a boolean/,
+    );
   });
 
   it("lets explicit thresholds override profile defaults", () => {

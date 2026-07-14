@@ -41,6 +41,7 @@ export interface HeadroomPluginOptions {
   debugLevel?: DebugLevel;
   debugSink?: DebugSink;
   debugPath?: string;
+  readLifecycle?: boolean;
   toolPolicy?: ToolPolicyConfig;
   outputFiles?: OutputFilesConfig;
 }
@@ -58,6 +59,7 @@ export interface NormalizedHeadroomConfig {
   debugLevel: DebugLevel;
   debugSink: DebugSink;
   debugPath: string;
+  readLifecycle: boolean;
   toolPolicy: NormalizedToolPolicy;
   outputFiles: NormalizedOutputFilesConfig;
 }
@@ -80,6 +82,7 @@ export const DEFAULT_HEADROOM_CONFIG: NormalizedHeadroomConfig = {
   debugLevel: "summary",
   debugSink: "metadata",
   debugPath: ".headroom/debug.ndjson",
+  readLifecycle: true,
   toolPolicy: normalizeToolPolicy(undefined, ["headroom_*", "ctx_*"]),
   outputFiles: normalizeOutputFilesConfig(undefined),
 };
@@ -130,6 +133,12 @@ export function normalizeConfig(
   }
   if (options.debug !== undefined && typeof options.debug !== "boolean") {
     throw new Error("debug must be a boolean");
+  }
+  if (
+    options.readLifecycle !== undefined &&
+    typeof options.readLifecycle !== "boolean"
+  ) {
+    throw new Error("readLifecycle must be a boolean");
   }
 
   const skipTools = options.skipTools
@@ -196,6 +205,7 @@ export function normalizeConfig(
     debugLevel,
     debugSink,
     debugPath,
+    readLifecycle: options.readLifecycle ?? profile === "coding",
     toolPolicy: normalizeToolPolicy(options.toolPolicy, skipTools),
     outputFiles: normalizeOutputFilesConfig(options.outputFiles),
   };

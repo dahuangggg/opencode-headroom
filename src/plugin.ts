@@ -20,6 +20,7 @@ import { containsCCRMarker } from "./markers.js";
 import { resolveToolPolicy, type ResolvedToolPolicy } from "./policy.js";
 import { SessionIntentStore } from "./session/intent.js";
 import { deduplicateMessageToolOutputs } from "./session/message-dedup.js";
+import { ReadLifecycleManager } from "./session/read-lifecycle.js";
 import {
   createTrustedOutputFileSource,
   type TrustedOutputFileReadResult,
@@ -221,6 +222,16 @@ export const HeadroomNativePlugin: Plugin = async (pluginInput, options = {}) =>
     losslessThenLossy: config.profile === "coding",
   });
   const sessionIntents = new SessionIntentStore();
+  const readLifecycle = config.readLifecycle
+    ? new ReadLifecycleManager(store, {
+        basePath,
+        ttlMs: Math.min(
+          config.ttlHours * 60 * 60 * 1000,
+          Number.MAX_SAFE_INTEGER,
+        ),
+        maxReplacements: config.storage.maxEntries,
+      })
+    : undefined;
   const telemetry = new LocalTelemetryAggregator({
     requestedAdapter: store.diagnostics.requested,
     activeAdapter: store.diagnostics.active,
@@ -317,6 +328,7 @@ export const HeadroomNativePlugin: Plugin = async (pluginInput, options = {}) =>
     },
     "experimental.chat.messages.transform": async (_input, output) => {
       try {
+        await readLifecycle?.apply(output.messages);
         deduplicateMessageToolOutputs(output.messages);
       } catch {
         // Request transforms must fail open so the model still receives context.
@@ -328,11 +340,13 @@ export const HeadroomNativePlugin: Plugin = async (pluginInput, options = {}) =>
         engine.deleteSessionState(event.properties.info.id);
         telemetry.deleteSession(event.properties.info.id);
         sessionIntents.delete(event.properties.info.id);
+        readLifecycle?.deleteSession(event.properties.info.id);
       }
     },
     dispose: async () => {
       engine.clearSessionState();
       sessionIntents.clear();
+      readLifecycle?.clear();
       await store.close();
     },
     tool: {
