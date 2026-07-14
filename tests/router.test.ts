@@ -93,8 +93,13 @@ describe("content router detection", () => {
       (_, index) =>
         [
           `export function value${index}(input: number): number {`,
-          `  const adjusted = input + ${index};`,
-          "  return adjusted;",
+          `  const stage0 = input + ${index};`,
+          "  const stage1 = stage0 + 1;",
+          "  const stage2 = stage1 + 2;",
+          "  const stage3 = stage2 + 3;",
+          "  const stage4 = stage3 + 4;",
+          "  const stage5 = stage4 + 5;",
+          "  return stage5;",
           "}",
         ].join("\n"),
     ).join("\n\n");
@@ -110,7 +115,7 @@ describe("content router detection", () => {
     expect(result.output).toContain(
       "export function value0(input: number): number {",
     );
-    expect(result.output).not.toContain("const adjusted = input + 30;");
+    expect(result.output).not.toContain("const stage4 = stage3 + 4;");
   });
 
   it("compresses explicit mixed sections and preserves their exact framing", () => {
@@ -165,8 +170,13 @@ describe("content router detection", () => {
       (_, index) =>
         [
           `export function value${index}(input: number): number {`,
-          `  const adjusted = input + ${index};`,
-          "  return adjusted;",
+          `  const stage0 = input + ${index};`,
+          "  const stage1 = stage0 + 1;",
+          "  const stage2 = stage1 + 2;",
+          "  const stage3 = stage2 + 3;",
+          "  const stage4 = stage3 + 4;",
+          "  const stage5 = stage4 + 5;",
+          "  return stage5;",
           "}",
         ].join("\n"),
     ).join("\n\n");
