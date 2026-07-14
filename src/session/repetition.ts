@@ -58,12 +58,25 @@ function normalizedLine(line: string): string {
   return line.trim().replace(/\s+/g, " ");
 }
 
+function lineFingerprint(content: string): string {
+  let first = 0x811c9dc5;
+  let second = 0x9e3779b9;
+  for (let index = 0; index < content.length; index += 1) {
+    const code = content.charCodeAt(index);
+    first = Math.imul(first ^ code, 0x01000193);
+    second = Math.imul(second ^ code, 0x85ebca6b);
+  }
+  return `${(first >>> 0).toString(16).padStart(8, "0")}${(second >>> 0)
+    .toString(16)
+    .padStart(8, "0")}`;
+}
+
 function fingerprintLines(content: string, limit: number): ReadonlySet<string> {
   const hashes = new Set<string>();
   for (const line of content.split(/\r?\n/)) {
     const normalized = normalizedLine(line);
     if (normalized) {
-      hashes.add(createContentDigest(normalized));
+      hashes.add(lineFingerprint(normalized));
     }
   }
 
@@ -109,16 +122,16 @@ export class SessionRepetitionStore {
     sessionID: string,
     content: string,
     now = Date.now(),
+    signature = createContentDigest(content),
   ): RepetitionMatch | undefined {
     const entries = this.liveEntries(sessionID, now);
     if (entries.length === 0) {
       return undefined;
     }
 
-    const digest = createContentDigest(content);
     for (let index = entries.length - 1; index >= 0; index -= 1) {
       const entry = entries[index]!;
-      if (entry.digest === digest) {
+      if (entry.digest === signature) {
         return { hash: entry.hash, kind: "exact", similarity: 1 };
       }
     }
@@ -153,11 +166,12 @@ export class SessionRepetitionStore {
     hash: string,
     content: string,
     expiresAt = Number.POSITIVE_INFINITY,
+    signature = createContentDigest(content),
   ): void {
     const entries = this.liveEntries(sessionID, Date.now());
     entries.push({
       hash,
-      digest: createContentDigest(content),
+      digest: signature,
       fingerprints: fingerprintLines(content, this.options.maxFingerprintLines),
       expiresAt,
     });

@@ -143,7 +143,11 @@ function compressExplicitSections(
   const debugSections: Array<Record<string, unknown>> = [];
   const output = [
     ...routed.sections.map((section) => {
-      const result = compressByContentType({ ...input, content: section.payload });
+      const result = compressByContentType({
+        ...input,
+        content: section.payload,
+        originalTokens: undefined,
+      });
       changed ||= result.changed;
       debugSections.push({
         tag: section.tag,
@@ -184,6 +188,7 @@ function compressExplicitSections(
     candidate: output,
     kind: "text",
     checkProtectedFacts: false,
+    originalTokens: input.originalTokens,
   });
   if (!gate.accepted) {
     return {
@@ -194,7 +199,16 @@ function compressExplicitSections(
       debug,
     };
   }
-  return { changed: true, output, strategy: "text", debug };
+  return {
+    changed: true,
+    output,
+    strategy: "text",
+    debug,
+    tokenCounts: {
+      original: gate.originalTokens,
+      compressed: gate.candidateTokens,
+    },
+  };
 }
 
 export function stripDetectionEnvelope(content: string): string {
@@ -337,9 +351,18 @@ export function compressByContentType(input: CompressorInput): CompressorResult 
           original: routed.payload,
           candidate: result.output,
           kind: detection.kind,
+          originalTokens:
+            routed.payload === input.content ? input.originalTokens : undefined,
         })
       : undefined;
     const accepted = !gate || gate.accepted;
+    const reusableTokenCounts =
+      gate && gate.accepted && routed.payload === input.content
+        ? {
+            original: gate.originalTokens,
+            compressed: gate.candidateTokens,
+          }
+        : undefined;
     return {
       ...result,
       changed: result.changed && accepted,
@@ -348,6 +371,7 @@ export function compressByContentType(input: CompressorInput): CompressorResult 
       ...(!accepted && gate && !gate.accepted
         ? { reason: `candidate_${gate.reason}` }
         : {}),
+      ...(reusableTokenCounts ? { tokenCounts: reusableTokenCounts } : {}),
       debug: {
         ...(result.debug ?? {}),
         router: {

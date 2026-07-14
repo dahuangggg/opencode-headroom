@@ -128,8 +128,9 @@ export function gateCompressionCandidate(input: {
   candidate: string;
   kind: ContentKind;
   checkProtectedFacts?: boolean;
+  originalTokens?: number;
 }): CandidateGateResult {
-  const originalTokens = estimateTokens(input.original);
+  const originalTokens = input.originalTokens ?? estimateTokens(input.original);
   const candidateTokens = estimateTokens(input.candidate);
   if (!input.candidate.trim()) {
     return {

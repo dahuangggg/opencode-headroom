@@ -19,6 +19,7 @@ export interface CompressorInput {
   hash: string;
   query: string;
   profile?: CompressionProfile;
+  originalTokens?: number;
 }
 
 export interface CompressorDebugSummary {
@@ -49,5 +50,9 @@ export interface CompressorResult {
   strategy: ContentKind;
   reason?: string;
   debug?: CompressionDebugInfo;
+  tokenCounts?: {
+    original: number;
+    compressed: number;
+  };
 }
 import type { CompressionProfile } from "./profile.js";

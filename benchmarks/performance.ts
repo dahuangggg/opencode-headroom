@@ -262,9 +262,22 @@ async function benchmarkStoreAndEngine(
   return withStore(backend, async (store) => {
     const engine = new NativeHeadroomCompatibleEngine(store);
     const sessionID = `perf-${backend}-${payload.label}`;
+    const directInputs = new Map(
+      Array.from({ length: WARMUP_RUNS + SAMPLE_RUNS }, (_, offset) => {
+        const iteration = offset - WARMUP_RUNS;
+        return [
+          iteration,
+          directPutInput(payload, sessionID, iteration),
+        ] as const;
+      }),
+    );
     let directHash: string | undefined;
     const storePut = await measure(async (iteration) => {
-      const entry = await store.put(directPutInput(payload, sessionID, iteration));
+      const input = directInputs.get(iteration);
+      if (!input) {
+        throw new Error(`missing precomputed Store input ${iteration}`);
+      }
+      const entry = await store.put(input);
       directHash = entry.hash;
     });
     if (!directHash) {
@@ -415,16 +428,31 @@ async function benchmarkSQLiteConcurrentPut(
     for (const worker of workers) {
       await worker.call({ action: "initialize", path });
     }
-    const distribution = await measure(async (iteration) => {
-      await Promise.all(
-        workers.map((worker, connection) =>
-          worker.call({
-            action: "put",
-            input: directPutInput(
+    const inputs = new Map(
+      Array.from({ length: WARMUP_RUNS + SAMPLE_RUNS }, (_, offset) => {
+        const iteration = offset - WARMUP_RUNS;
+        return [
+          iteration,
+          workers.map((_, connection) =>
+            directPutInput(
               payload,
               `perf-sqlite-worker-${connection}`,
               iteration * SQLITE_CONNECTIONS + connection,
             ),
+          ),
+        ] as const;
+      }),
+    );
+    const distribution = await measure(async (iteration) => {
+      const iterationInputs = inputs.get(iteration);
+      if (!iterationInputs) {
+        throw new Error(`missing precomputed concurrent input ${iteration}`);
+      }
+      await Promise.all(
+        workers.map((worker, connection) =>
+          worker.call({
+            action: "put",
+            input: iterationInputs[connection],
           }),
         ),
       );

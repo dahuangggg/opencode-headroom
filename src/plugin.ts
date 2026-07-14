@@ -490,24 +490,27 @@ export const HeadroomNativePlugin: Plugin = async (pluginInput, options = {}) =>
           return;
         }
 
-        const result = await engine.compress({
-          tool: input.tool,
-          sessionID: input.sessionID,
-          callID: input.callID,
-          args: input.args,
-          intent: sessionIntents.get(input.sessionID),
-          output: originalOutput,
-          ttlMs: (policy.ccr?.ttlHours ?? config.ttlHours) * 60 * 60 * 1000,
-          strength: policy.strength,
-          retrieveDefaults: {
-            mode: policy.retrieve?.defaultMode ?? "summary",
-            ...(policy.retrieve?.maxChars !== undefined
-              ? { maxChars: policy.retrieve.maxChars }
-              : policy.retrieve?.defaultMode === "full"
-                ? {}
-                : { maxChars: 12_000 }),
+        const result = await engine.compressWithKnownTokens(
+          {
+            tool: input.tool,
+            sessionID: input.sessionID,
+            callID: input.callID,
+            args: input.args,
+            intent: sessionIntents.get(input.sessionID),
+            output: originalOutput,
+            ttlMs: (policy.ccr?.ttlHours ?? config.ttlHours) * 60 * 60 * 1000,
+            strength: policy.strength,
+            retrieveDefaults: {
+              mode: policy.retrieve?.defaultMode ?? "summary",
+              ...(policy.retrieve?.maxChars !== undefined
+                ? { maxChars: policy.retrieve.maxChars }
+                : policy.retrieve?.defaultMode === "full"
+                  ? {}
+                  : { maxChars: 12_000 }),
+            },
           },
-        });
+          originalTokens,
+        );
         if (!result.changed) {
           await complete(
             {

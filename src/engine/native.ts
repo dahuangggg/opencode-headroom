@@ -67,8 +67,26 @@ export class NativeHeadroomCompatibleEngine implements CompressionEngine {
   async compress(
     input: ToolOutputCompressionInput,
   ): Promise<ToolOutputCompressionResult> {
-    const originalTokens = estimateTokens(input.output);
+    return this.compressInternal(input);
+  }
+
+  async compressWithKnownTokens(
+    input: ToolOutputCompressionInput,
+    originalTokens: number,
+  ): Promise<ToolOutputCompressionResult> {
+    if (!Number.isSafeInteger(originalTokens) || originalTokens < 0) {
+      throw new Error("known original token count must be a non-negative safe integer");
+    }
+    return this.compressInternal(input, originalTokens);
+  }
+
+  private async compressInternal(
+    input: ToolOutputCompressionInput,
+    knownOriginalTokens?: number,
+  ): Promise<ToolOutputCompressionResult> {
     if (!input.output.trim() || containsCCRMarker(input.output)) {
+      const originalTokens =
+        knownOriginalTokens ?? estimateTokens(input.output);
       return {
         changed: false,
         output: input.output,
@@ -83,8 +101,15 @@ export class NativeHeadroomCompatibleEngine implements CompressionEngine {
     }
 
     const hash = createContentHash(input.output);
-    const repetition = this.repetition.match(input.sessionID, input.output);
+    const repetition = this.repetition.match(
+      input.sessionID,
+      input.output,
+      Date.now(),
+      hash,
+    );
     if (repetition) {
+      const originalTokens =
+        knownOriginalTokens ?? estimateTokens(input.output);
       const candidate = repetitionSummary(hash, repetition);
       const candidateTokens = estimateTokens(candidate);
       if (candidateTokens < originalTokens) {
@@ -112,6 +137,7 @@ export class NativeHeadroomCompatibleEngine implements CompressionEngine {
           entry.hash,
           input.output,
           entry.expiresAt,
+          hash,
         );
         return {
           changed: true,
@@ -133,8 +159,15 @@ export class NativeHeadroomCompatibleEngine implements CompressionEngine {
       hash,
       query: buildCompressionQuery(input.args, input.intent),
       profile,
+      originalTokens: knownOriginalTokens,
     });
-    const compressedTokens = estimateTokens(compressed.output);
+    const originalTokens =
+      knownOriginalTokens ??
+      compressed.tokenCounts?.original ??
+      estimateTokens(input.output);
+    const compressedTokens = compressed.changed
+      ? (compressed.tokenCounts?.compressed ?? estimateTokens(compressed.output))
+      : originalTokens;
     if (!compressed.changed || compressedTokens >= originalTokens) {
       return {
         changed: false,
@@ -174,10 +207,12 @@ export class NativeHeadroomCompatibleEngine implements CompressionEngine {
           hash: committedHash,
           query: buildCompressionQuery(input.args, input.intent),
           profile,
+          originalTokens: knownOriginalTokens,
         });
         return {
           compressedContent: finalized.output,
-          compressedTokens: estimateTokens(finalized.output),
+          compressedTokens:
+            finalized.tokenCounts?.compressed ?? estimateTokens(finalized.output),
         };
       },
     });
@@ -186,6 +221,7 @@ export class NativeHeadroomCompatibleEngine implements CompressionEngine {
       entry.hash,
       input.output,
       entry.expiresAt,
+      hash,
     );
 
     return {
