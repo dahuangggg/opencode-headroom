@@ -110,6 +110,11 @@ validated against CCR before any classification or scan-limit exit; if their
 backing entry expired or was evicted, the tracker restores the raw Read instead
 of sending an unretrievable pointer.
 
+Headroom's net-cost frozen-prefix unlock is an opt-in transport policy and is
+off in the reviewed default. This native plugin likewise never unlocks a frozen
+part from guessed cache prices: OpenCode does not expose provider cache usage to
+the transform hook. Live parts continue through the normal token-savings gate.
+
 Read lifecycle management runs before span folding under the `coding` profile.
 It derives `Read`, `Edit`, and `Write` history from completed OpenCode tool
 parts. An old Read becomes stale after a later write to the same normalized

@@ -165,6 +165,7 @@ describe("Context lifecycle", () => {
       callID: "before",
       partID: "before-part",
       messageID: "message-1",
+      output: "large frozen payload\n".repeat(5_000),
     });
     const breakpoint = completedTool({
       sessionID: "s1",

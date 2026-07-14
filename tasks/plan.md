@@ -314,11 +314,20 @@ Acceptance:
 - Superseded and sub-512-byte Reads remain byte-exact by default.
 - Frozen stale Reads are classified but never rewritten.
 
-### Phase 3: Add net-cost mutation decisions
+### Phase 3: Codify the default net-cost policy
 
-- Compare token savings with cache invalidation and future cache-read cost.
-- Keep the default conservative when provider cache state is not observable.
+- Keep frozen parts immutable when provider cache state and future cache-read
+  cost are not observable through the native hook.
+- Do not mirror Headroom's opt-in `HEADROOM_NET_COST_POLICY=1` transport policy
+  as a native default; the reviewed Headroom reference leaves it disabled.
 - Never use runtime network calls or provider transport interception.
+
+Acceptance:
+- Potential token savings alone never unlock a frozen part.
+- Live-zone compression continues to use the existing positive-token-savings
+  gate.
+- Any future net-cost unlock requires an explicit design with real provider
+  cache evidence rather than guessed prices or cache state.
 
 ### Phase 4: Add relevance split and context protection
 

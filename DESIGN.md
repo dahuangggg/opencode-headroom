@@ -247,6 +247,11 @@ Replay-bearing sessions are not evicted; when every session slot is protected,
 new sessions remain untracked and unmodified. Session deletion and plugin
 disposal remove this state.
 
+The reviewed Headroom net-cost mutation gate is opt-in and disabled by default.
+The native hook has no provider cache-usage evidence, so it never guesses a
+future cache-read price or unlocks a frozen part based only on hypothetical
+savings. Live parts still pass the normal positive-token-savings gate.
+
 ### Read lifecycle
 
 `ReadLifecycleManager` scans completed OpenCode tool parts before each model

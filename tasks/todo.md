@@ -65,9 +65,14 @@
 - [x] Preserve exact CCR recovery for stale live-zone Reads.
 - [x] Checkpoint: targeted tests plus multi-turn integration.
 
-### Net Cost and Relevance
+### Net Cost Default
 
-- [ ] Add deterministic cache-aware mutation cost decisions.
+- [x] Confirm the reviewed Headroom net-cost policy is opt-in and default-off.
+- [x] Keep frozen parts immutable when provider cache state is unobservable.
+- [x] Require real provider cache evidence before any future opt-in unlock.
+
+### Relevance and Context Protection
+
 - [ ] Add relevance split and error/recent-code/active-file protection.
 - [ ] Checkpoint: quality, CCR, and multi-turn comparison gates.
 
