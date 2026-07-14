@@ -257,3 +257,78 @@ Likely files:
 ## Open Questions
 
 None blocking. ML and public breaking changes remain approval-gated.
+
+## Extension: Multi-turn Context Effect Parity
+
+The completed plan above remains the contract for single tool-output effect
+parity. This extension aligns the default multi-turn cache and context behavior
+without adopting Headroom's proxy transport.
+
+### Phase 0: Lock the lifecycle reference
+
+- Keep the existing pinned compression oracle unchanged.
+- Record the separate Headroom lifecycle reference and its default flags.
+- Translate provider-visible cache semantics into conservative native-hook
+  invariants before changing runtime behavior.
+
+Verify:
+- `tasks/headroom-context-lifecycle-baseline.md` names the exact references.
+- Every claimed default points to current local Headroom source or tests.
+
+### Phase 1: Add cache-aware Context Lifecycle
+
+- Track a bounded, session-scoped frontier of message identities already seen
+  by the transform hook.
+- Treat the first observation of a session as frozen history and only permit
+  later, previously unseen messages to enter the mutable live zone.
+- Apply the same live-zone boundary to Read lifecycle and span deduplication.
+
+Acceptance:
+- Previously observed messages remain byte-exact when later turns are appended.
+- A newly appended tool result can still be compressed against frozen history.
+- Unknown identities, overflow, and storage failures fail open conservatively.
+- Session deletion and plugin disposal clear all lifecycle state.
+
+Verify:
+- `bun test tests/context-lifecycle.test.ts tests/read-lifecycle.test.ts tests/multiturn-parity.test.ts tests/plugin.test.ts`
+- `bun run typecheck && bun run build`
+
+### Phase 2: Align Read lifecycle defaults
+
+- Compress stale Reads, preserve superseded Reads by default, and skip Read
+  payloads smaller than 512 bytes.
+- Keep `readLifecycle?: boolean` backward compatible; advanced internal policy
+  must not become a required public configuration migration.
+
+Acceptance:
+- Stale live-zone Reads retain exact CCR recovery.
+- Superseded and sub-512-byte Reads remain byte-exact by default.
+- Frozen stale Reads are classified but never rewritten.
+
+### Phase 3: Add net-cost mutation decisions
+
+- Compare token savings with cache invalidation and future cache-read cost.
+- Keep the default conservative when provider cache state is not observable.
+- Never use runtime network calls or provider transport interception.
+
+### Phase 4: Add relevance split and context protection
+
+- Combine bounded session intent, scalar tool arguments, active file, errors,
+  and recent Python/TS/JS code when selecting content.
+- Preserve system/user content and the frozen prefix exactly.
+
+### Phase 5: Add decision caches and circuit breaking
+
+- Cache bounded compression and skip decisions without retaining unbounded raw
+  content.
+- Fail open and temporarily bypass a strategy after repeated local failures.
+- Finish with all quality, CCR, performance, build, and package gates.
+
+## Extension Risks and Mitigations
+
+| Risk | Impact | Mitigation |
+|---|---|---|
+| OpenCode adds provider cache markers after the plugin hook | High | Freeze previously observed message identities even when metadata is absent |
+| First transform occurs after a plugin restart with old history | High | Seed state without mutating anything on first observation |
+| Cache safety removes existing historical dedup savings | Medium | Keep frozen history as references and compress only newly appended live outputs |
+| Public configuration behavior changes accidentally | Medium | Preserve the existing boolean surface and add only optional fields if later required |
