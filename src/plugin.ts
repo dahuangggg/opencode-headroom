@@ -19,6 +19,7 @@ import { NativeHeadroomCompatibleEngine } from "./engine/native.js";
 import { containsCCRMarker } from "./markers.js";
 import { resolveToolPolicy, type ResolvedToolPolicy } from "./policy.js";
 import { SessionIntentStore } from "./session/intent.js";
+import { deduplicateMessageToolOutputs } from "./session/message-dedup.js";
 import {
   createTrustedOutputFileSource,
   type TrustedOutputFileReadResult,
@@ -310,6 +311,13 @@ export const HeadroomNativePlugin: Plugin = async (pluginInput, options = {}) =>
   return {
     "chat.message": async (input, output) => {
       sessionIntents.update(input.sessionID, output.parts);
+    },
+    "experimental.chat.messages.transform": async (_input, output) => {
+      try {
+        deduplicateMessageToolOutputs(output.messages);
+      } catch {
+        // Request transforms must fail open so the model still receives context.
+      }
     },
     event: async ({ event }) => {
       if (event.type === "session.deleted") {
