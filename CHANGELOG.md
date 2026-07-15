@@ -2,6 +2,16 @@
 
 All notable changes to this project are documented in this file.
 
+## [0.3.2] - 2026-07-15
+
+### Fixed
+
+- Correct the README install command so it follows the current npm release
+  instead of pinning users to the `0.2.x` line, and refresh stale current-version
+  wording in the public README and design document.
+- Remove internal `docs/superpowers` plans from the tracked repository surface
+  while keeping the local `docs/` directory ignored.
+
 ## [0.3.1] - 2026-07-15
 
 ### Fixed
