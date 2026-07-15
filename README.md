@@ -6,7 +6,7 @@ local Content-Addressable Context Repository (CCR), returns a compact result
 with a retrieval hash, and exposes bounded tools for recovering only the
 content that is needed.
 
-Version 0.2.0 adds deterministic per-tool policy, trusted file-backed output,
+The plugin provides deterministic per-tool policy, trusted file-backed output,
 bounded retrieval defaults, bounded storage, session lifecycle cleanup, and
 local cost telemetry. The plugin never learns preferences or changes policy
 from observed behavior.
@@ -41,7 +41,7 @@ is still backed by the exact original in CCR.
 ## Install
 
 ```sh
-bun add @dahuangggg/opencode-headroom@^0.2.0
+bun add @dahuangggg/opencode-headroom
 ```
 
 Add the plugin to `opencode.json`. A complete, conservative configuration is in
@@ -120,7 +120,8 @@ validated against CCR before any classification or scan-limit exit; if their
 backing entry expired or was evicted, the tracker restores the raw Read instead
 of sending an unretrievable pointer.
 
-The same live message-transform window provides an MCP compatibility fallback.
+Since v0.3.1, the same live message-transform window provides an automatic MCP
+compatibility fallback; no MCP-specific configuration is required.
 OpenCode 1.17.13 can call `tool.execute.after` with the MCP SDK's raw
 `CallToolResult` before it assembles the documented string output. Headroom
 records only that missed call identity, then compresses the completed
@@ -178,7 +179,7 @@ uses finer isolation because its content strategies execute independently.
 
 | Option | Default | Meaning |
 | --- | --- | --- |
-| `engine` | `"native"` | Compression engine; 0.2 supports only `native`. |
+| `engine` | `"native"` | Compression engine; currently only `native` is supported. |
 | `profile` | `"coding"` | `coding` matches Headroom's low activation thresholds and lossless-first pipeline; `legacy` restores the earlier thresholds, lossless setting, and Read-lifecycle default. |
 | `thresholdTokens` | profile default (`25` for `coding`) | Global estimated-token threshold. An explicit value overrides the profile. |
 | `thresholdChars` | profile default (`25` for `coding`) | Global character threshold. An explicit value overrides the profile; compression is considered when either threshold is reached. |
@@ -317,7 +318,7 @@ visible. `headroom_*` remains protected as a structural recursion invariant;
 ## Trusted file-backed output
 
 OpenCode tools may return a truncated display plus `outputPath`, `outputFile`,
-or `outputRef` metadata. Version 0.2 reads that file only when the display is
+or `outputRef` metadata. The plugin reads that file only when the display is
 marked as truncated and both trust conditions pass:
 
 - the tool matches `outputFiles.trustedTools`;
@@ -512,8 +513,9 @@ strength, thresholds, and decision reason.
 
 Check `headroom_stats` for `storage adapter`. Outside Bun, `auto` reports
 `auto -> memory` with `unsupported_runtime`. Under Bun, inspect the surfaced
-path, permission, migration, or lock error; 0.2 will not silently switch to
-memory. Use `storage.kind: "memory"` explicitly if that is the desired behavior.
+path, permission, migration, or lock error; the plugin will not silently switch
+to memory. Use `storage.kind: "memory"` explicitly if that is the desired
+behavior.
 
 ### A hash cannot be retrieved
 
@@ -564,9 +566,9 @@ public entry points, verifies Node's observable `auto -> memory` unsupported-
 runtime fallback stats, and initializes the plugin with Bun.
 
 Before publication, also load the freshly installed tarball through a real
-OpenCode host. The current 0.2 build was verified with OpenCode 1.17.13 by
-pointing the host at the temporary consumer's installed `dist/plugin.js`; it
-initialized SQLite schema v2 without making a model request.
+OpenCode host. Point the host at the temporary consumer's installed
+`dist/plugin.js` and verify that it initializes SQLite schema v2 without making
+a model request.
 
 See [`DESIGN.md`](./DESIGN.md) for module boundaries and release invariants.
 

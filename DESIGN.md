@@ -2,7 +2,7 @@
 
 ## Purpose and release scope
 
-`opencode-headroom` 0.2.0 is a native OpenCode plugin that compresses large tool
+`opencode-headroom` is a native OpenCode plugin that compresses large tool
 outputs after execution and preserves exact originals in a local
 Content-Addressable Context Repository (CCR). It adopts Headroom's routing,
 compression, and retrieval ideas without requiring a proxy, provider rewrite,
@@ -14,10 +14,10 @@ The package has two public entry points:
   `HeadroomNativePlugin`, plus public engine and store types;
 - `@dahuangggg/opencode-headroom/plugin` exports the plugin implementation directly.
 
-Version 0.2 adds five deep boundaries around the native engine: deterministic
-tool policy, trusted file-backed output, bounded CCR lifecycle, Read lifecycle,
-and local telemetry. Each boundary has a small public interface and can change
-internally without rewriting the OpenCode hook.
+The native engine keeps its major concerns behind explicit boundaries:
+deterministic tool policy, trusted file-backed output, bounded CCR lifecycle,
+cache-safe context lifecycle, and local telemetry. Each boundary has a small
+public interface and can change internally without rewriting the OpenCode hook.
 
 ## Runtime flow
 
@@ -57,8 +57,8 @@ or Bun-backed persistent adapter failure is surfaced during plugin startup.
 - resolves policy before any file-backed output read;
 - converts hook input into the engine interface;
 - registers `headroom_retrieve` and `headroom_stats`;
-- establishes one cache-safe mutation window, then applies Read lifecycle before
-  repeated-span folding inside that boundary;
+- establishes one cache-safe mutation window, then applies Read lifecycle,
+  pending normalized MCP fallback handling, and repeated-span folding in order;
 - attaches compact `output.metadata.headroom` data;
 - handles session deletion and plugin disposal;
 - records safe local telemetry and optional debug traces.
@@ -77,7 +77,7 @@ An explicit boolean `readLifecycle` value overrides either profile. This pass
 is independent of per-tool compression policy because it acts only after a
 later operation proves an old Read stale or fully superseded.
 
-Resolution order is part of the 0.2 contract:
+Resolution order is part of the public contract:
 
 1. non-overridable recursion protection for `headroom_*`;
 2. explicit user rules in declaration order, first match wins;
@@ -517,7 +517,7 @@ The release gates are:
 3. deterministic `bench:check`, which cannot rewrite the tracked report;
 4. clean tarball surface and temporary-consumer install;
 5. `npm ls --all` without self, invalid, or unmet dependencies;
-6. a TypeScript consumer compiling the public 0.2 configuration surface;
+6. a TypeScript consumer compiling the current public configuration surface;
 7. Node imports plus observable `auto -> memory` unsupported-runtime stats;
 8. Bun plugin initialization from the installed tarball;
 9. npm-normalized package metadata, dist-only public export targets, packed
@@ -536,12 +536,13 @@ The release gates are:
 and SQLite results remain non-blocking baselines until enough stable CI history
 exists to approve regression thresholds.
 
-The current 0.2 build was host-smoked with OpenCode 1.17.13 from a temporary
-tarball installation: the host loaded the installed `dist/plugin.js` and
-initialized the expected SQLite schema v2 without issuing a model request.
+For the manual host smoke, OpenCode loads the temporary consumer's installed
+`dist/plugin.js` and initializes the expected SQLite schema v2 without issuing
+a model request.
 
-`bun.lock` is the canonical repository lockfile. Generated `dist`, `.headroom/`,
-SQLite side files, debug traces, and local package artifacts remain untracked.
+`bun.lock` is the canonical repository lockfile. Local `docs/`, generated
+`dist`, `.headroom/`, SQLite side files, debug traces, and package artifacts
+remain untracked.
 
 ## Extension boundaries
 
