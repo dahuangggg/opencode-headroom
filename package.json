@@ -1,6 +1,6 @@
 {
   "name": "@dahuangggg/opencode-headroom",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "description": "Headroom-compatible native OpenCode plugin for tool-output compression and CCR retrieval",
   "keywords": [
     "opencode",
