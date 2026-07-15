@@ -120,6 +120,14 @@ validated against CCR before any classification or scan-limit exit; if their
 backing entry expired or was evicted, the tracker restores the raw Read instead
 of sending an unretrievable pointer.
 
+The same live message-transform window provides an MCP compatibility fallback.
+OpenCode 1.17.13 can call `tool.execute.after` with the MCP SDK's raw
+`CallToolResult` before it assembles the documented string output. Headroom
+records only that missed call identity, then compresses the completed
+request-local `state.output` after OpenCode has normalized it. The raw part in
+OpenCode storage is not overwritten, cache-controlled history is not mutated,
+and a future assembled after-hook result naturally stays on the normal fast path.
+
 Headroom's net-cost frozen-prefix unlock is an opt-in transport policy and is
 off in the reviewed default. This native plugin likewise never unlocks a frozen
 part from guessed cache prices: OpenCode does not expose provider cache usage to
