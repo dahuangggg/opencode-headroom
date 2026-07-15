@@ -2,6 +2,15 @@
 
 All notable changes to this project are documented in this file.
 
+## [Unreleased]
+
+### Fixed
+
+- Compress completed MCP tool output in the live message-transform window when
+  OpenCode calls `tool.execute.after` with a raw `CallToolResult`. The stored
+  OpenCode part remains exact, and later requests replay the same compressed
+  representation without double-processing normalized tool results.
+
 ## [0.3.0] - 2026-07-14
 
 ### Added

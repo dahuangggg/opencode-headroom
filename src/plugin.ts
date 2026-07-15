@@ -1,6 +1,6 @@
 import { isAbsolute, resolve } from "node:path";
 
-import type { Plugin } from "@opencode-ai/plugin";
+import type { Hooks, Plugin } from "@opencode-ai/plugin";
 
 import {
   normalizeConfig,
@@ -48,6 +48,73 @@ interface CompressionSource {
   path?: string;
   readError?: string;
   tooLarge?: boolean;
+}
+
+interface CompletedToolFallbackPart {
+  readonly source: object;
+  readonly tool: string;
+  readonly sessionID: string;
+  readonly callID: string;
+  readonly state: {
+    input: unknown;
+    output: string;
+    title?: unknown;
+    metadata?: unknown;
+  };
+}
+
+const MAX_PENDING_MCP_SESSIONS = 256;
+const MAX_PENDING_MCP_CALLS_PER_SESSION = 2_048;
+
+class PendingMcpToolCalls {
+  private readonly sessions = new Map<string, Set<string>>();
+
+  get empty(): boolean {
+    return this.sessions.size === 0;
+  }
+
+  private key(callID: string, tool: string): string {
+    return JSON.stringify([callID, tool]);
+  }
+
+  mark(sessionID: string, callID: string, tool: string): void {
+    if (!sessionID || !callID || !tool) return;
+    let calls = this.sessions.get(sessionID);
+    if (!calls) {
+      if (this.sessions.size >= MAX_PENDING_MCP_SESSIONS) {
+        const oldest = this.sessions.keys().next().value;
+        if (oldest !== undefined) this.sessions.delete(oldest);
+      }
+      calls = new Set<string>();
+      this.sessions.set(sessionID, calls);
+    }
+    const key = this.key(callID, tool);
+    if (!calls.has(key) && calls.size >= MAX_PENDING_MCP_CALLS_PER_SESSION) {
+      const oldest = calls.values().next().value;
+      if (oldest !== undefined) calls.delete(oldest);
+    }
+    calls.delete(key);
+    calls.add(key);
+  }
+
+  has(sessionID: string, callID: string, tool: string): boolean {
+    return this.sessions.get(sessionID)?.has(this.key(callID, tool)) ?? false;
+  }
+
+  delete(sessionID: string, callID: string, tool: string): void {
+    const calls = this.sessions.get(sessionID);
+    if (!calls) return;
+    calls.delete(this.key(callID, tool));
+    if (calls.size === 0) this.sessions.delete(sessionID);
+  }
+
+  deleteSession(sessionID: string): void {
+    this.sessions.delete(sessionID);
+  }
+
+  clear(): void {
+    this.sessions.clear();
+  }
 }
 
 const COMPRESSION_TELEMETRY_REASONS = new Set<CompressionTelemetryReason>([
@@ -117,6 +184,32 @@ function metadataRecord(metadata: unknown): Record<string, unknown> | undefined 
   return metadata && typeof metadata === "object"
     ? (metadata as Record<string, unknown>)
     : undefined;
+}
+
+function completedToolFallbackPart(
+  value: unknown,
+): CompletedToolFallbackPart | undefined {
+  if (Array.isArray(value)) return undefined;
+  const part = metadataRecord(value);
+  if (Array.isArray(part?.state)) return undefined;
+  const state = metadataRecord(part?.state);
+  if (
+    part?.type !== "tool" ||
+    typeof part.tool !== "string" ||
+    typeof part.sessionID !== "string" ||
+    typeof part.callID !== "string" ||
+    state?.status !== "completed" ||
+    typeof state.output !== "string"
+  ) {
+    return undefined;
+  }
+  return {
+    source: part,
+    tool: part.tool,
+    sessionID: part.sessionID,
+    callID: part.callID,
+    state: state as unknown as CompletedToolFallbackPart["state"],
+  };
 }
 
 function metadataString(
@@ -228,6 +321,7 @@ export const HeadroomNativePlugin: Plugin = async (pluginInput, options = {}) =>
   });
   const sessionIntents = new SessionIntentStore();
   const contextLifecycle = new ContextLifecycleManager();
+  const pendingMcpToolCalls = new PendingMcpToolCalls();
   const readLifecycle = config.readLifecycle
     ? new ReadLifecycleManager(store, {
         basePath,
@@ -328,16 +422,80 @@ export const HeadroomNativePlugin: Plugin = async (pluginInput, options = {}) =>
     };
   }
 
-  return {
+  const hooks: Hooks = {
     "chat.message": async (input, output) => {
       sessionIntents.update(input.sessionID, output.parts);
     },
     "experimental.chat.messages.transform": async (_input, output) => {
       try {
+        const processedFallbacks: Array<{
+          sessionID: string;
+          callID: string;
+          tool: string;
+        }> = [];
         await contextLifecycle.run(output.messages, async (mutationWindow) => {
           await readLifecycle?.apply(output.messages, mutationWindow);
+          if (!pendingMcpToolCalls.empty) {
+            for (const message of output.messages) {
+              for (const part of message.parts) {
+                const candidate = completedToolFallbackPart(part);
+                if (
+                  !candidate ||
+                  !pendingMcpToolCalls.has(
+                    candidate.sessionID,
+                    candidate.callID,
+                    candidate.tool,
+                  )
+                ) {
+                  continue;
+                }
+                processedFallbacks.push({
+                  sessionID: candidate.sessionID,
+                  callID: candidate.callID,
+                  tool: candidate.tool,
+                });
+                if (
+                  !mutationWindow.canMutateToolPart(candidate.source) ||
+                  containsCCRMarker(candidate.state.output)
+                ) {
+                  continue;
+                }
+
+                const assembled = {
+                  title:
+                    typeof candidate.state.title === "string"
+                      ? candidate.state.title
+                      : candidate.tool,
+                  output: candidate.state.output,
+                  // Compress the final AI-visible projection only. In particular,
+                  // do not follow OpenCode outputPath metadata from request history.
+                  metadata: {} as Record<string, unknown>,
+                };
+                await hooks["tool.execute.after"]!(
+                  {
+                    tool: candidate.tool,
+                    sessionID: candidate.sessionID,
+                    callID: candidate.callID,
+                    args: candidate.state.input ?? {},
+                  },
+                  assembled,
+                );
+                candidate.state.output = assembled.output;
+                const headroom = metadataRecord(assembled.metadata)?.headroom;
+                if (headroom !== undefined) {
+                  candidate.state.metadata = {
+                    ...(metadataRecord(candidate.state.metadata) ?? {}),
+                    headroom,
+                  };
+                }
+              }
+            }
+          }
           deduplicateMessageToolOutputs(output.messages, mutationWindow);
         });
+        for (const item of processedFallbacks) {
+          pendingMcpToolCalls.delete(item.sessionID, item.callID, item.tool);
+        }
       } catch {
         // Request transforms must fail open so the model still receives context.
       }
@@ -352,6 +510,7 @@ export const HeadroomNativePlugin: Plugin = async (pluginInput, options = {}) =>
             engine.deleteSessionState(sessionID);
             telemetry.deleteSession(sessionID);
             sessionIntents.delete(sessionID);
+            pendingMcpToolCalls.deleteSession(sessionID);
             contextLifecycle.deleteSession(sessionID);
             readLifecycle?.deleteSession(sessionID);
           }
@@ -362,6 +521,7 @@ export const HeadroomNativePlugin: Plugin = async (pluginInput, options = {}) =>
       await contextLifecycle.closeAndDrain();
       engine.clearSessionState();
       sessionIntents.clear();
+      pendingMcpToolCalls.clear();
       contextLifecycle.clear();
       readLifecycle?.clear();
       await store.close();
@@ -373,6 +533,17 @@ export const HeadroomNativePlugin: Plugin = async (pluginInput, options = {}) =>
       headroom_stats: createStatsTool(engine, telemetry),
     },
     "tool.execute.after": async (input, output) => {
+      // OpenCode 1.17.13 passes raw MCP CallToolResult here. Record only the
+      // public call identity; the normalized output is handled at transform time.
+      if (
+        !output ||
+        typeof output !== "object" ||
+        typeof (output as { title?: unknown }).title !== "string" ||
+        typeof (output as { output?: unknown }).output !== "string"
+      ) {
+        pendingMcpToolCalls.mark(input.sessionID, input.callID, input.tool);
+        return;
+      }
       const startedAt = performance.now();
       let failurePolicyContext:
         | {
@@ -665,6 +836,8 @@ export const HeadroomNativePlugin: Plugin = async (pluginInput, options = {}) =>
       }
     },
   };
+
+  return hooks;
 };
 
 export default HeadroomNativePlugin;

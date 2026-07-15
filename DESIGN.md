@@ -37,7 +37,8 @@ OpenCode tool result
 
 headroom_retrieve -> session-scoped CCR get -> bounded view or explicit full
 headroom_stats    -> CCR stats + global/session telemetry snapshot
-messages.transform -> stale/superseded Read CCR fold -> repeated-span fold
+messages.transform -> stale/superseded Read CCR fold -> pending MCP fallback
+                   -> repeated-span fold
 session.deleted   -> delete CCR rows + intent/repetition/Read/telemetry state
 dispose           -> clear session state + close the active CCR adapter
 ```
@@ -279,6 +280,15 @@ is replaced with that exact sent representation before any transform runs.
 Frozen parts can still be reference inputs for span deduplication, but neither
 Read lifecycle nor dedup may target them. Missing or inconsistent identities,
 capacity saturation, and first observation all fail conservatively.
+
+OpenCode 1.17.13 may invoke the MCP after-hook with a raw `CallToolResult` rather
+than the hook's documented assembled output. The adapter does not parse or
+rewrite that private MCP shape. It records the bounded `(session, call, tool)`
+identity and, after Read lifecycle handling, compresses the matching completed
+part only when Context lifecycle marks it live. This happens before span
+deduplication so CCR retains the exact normalized MCP output. Normal assembled
+hook results never enter the pending set, making an upstream fix a natural
+no-op for the fallback.
 
 Transforms for the same session are serialized through a bounded queue. A
 window commits only after the entire transform succeeds; exceptions abort every
